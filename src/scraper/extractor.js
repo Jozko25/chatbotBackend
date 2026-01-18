@@ -160,6 +160,31 @@ export function mergeExtractedData(llmData, regexData) {
     return merged;
   })();
 
+  // Merge doctors: keep LLM enrichments but don't drop regex doctors
+  const mergedDoctors = (() => {
+    const llmDoctors = Array.isArray(llmData.doctors) ? llmData.doctors : [];
+    const regexDoctors = Array.isArray(regexData.doctors) ? regexData.doctors : [];
+
+    const seen = new Set();
+    const merged = [];
+
+    const addDoctor = (doc) => {
+      const key = (doc.name || '').toLowerCase().trim();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      merged.push({
+        name: doc.name || '',
+        specialization: doc.specialization || ''
+      });
+    };
+
+    llmDoctors.forEach(addDoctor);
+    regexDoctors.forEach(addDoctor);
+
+    // If both are empty, return empty array to keep shape consistent
+    return merged;
+  })();
+
   return {
     clinic_name: llmData.clinic_name || regexData.clinic_name,
     address: llmData.address || regexData.address,
@@ -167,7 +192,7 @@ export function mergeExtractedData(llmData, regexData) {
     email: llmData.email || regexData.email,
     opening_hours: llmData.opening_hours || regexData.opening_hours,
     services: mergedServices,
-    doctors: (llmData.doctors?.length > 0) ? llmData.doctors : regexData.doctors,
+    doctors: mergedDoctors,
     faq: regexData.faq || [],
     source_pages: regexData.source_pages,
     raw_content: regexData.raw_content,
