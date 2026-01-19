@@ -257,7 +257,7 @@ function buildContext(clinicData, query, detectedIntents = {}, customKnowledge =
 /**
  * Detect user intent (multilingual) using LLM to avoid language-specific heuristics
  */
-async function detectIntent(apiKey, query, conversationHistory = []) {
+export async function detectIntent(apiKey, query, conversationHistory = []) {
   const client = new OpenAI({ apiKey });
 
   const prompt = `Classify the user's request (any language). Consider the conversation context. Respond ONLY with JSON:

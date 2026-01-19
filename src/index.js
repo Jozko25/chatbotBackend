@@ -13,7 +13,7 @@ import apiKeyRoutes from './routes/apiKeys.js';
 import usageRoutes from './routes/usage.js';
 import bookingRoutes from './routes/bookings.js';
 import { sendBookingNotifications } from './services/notifications.js';
-import { extractBookingData } from './chat/chatbot.js';
+import { extractBookingData, detectIntent } from './chat/chatbot.js';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -613,6 +613,22 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
   res.flushHeaders();
 
   try {
+    // Detect booking intent first (before streaming)
+    let bookingIntent = false;
+    if (chatbot.bookingEnabled && OPENAI_API_KEY) {
+      try {
+        const intents = await detectIntent(OPENAI_API_KEY, message, conversationHistory || []);
+        bookingIntent = intents.booking === true;
+        
+        // Send intent info at start of stream
+        if (bookingIntent) {
+          res.write(`data: ${JSON.stringify({ bookingIntent: true })}\n\n`);
+        }
+      } catch (intentError) {
+        console.error('Intent detection error:', intentError);
+      }
+    }
+
     const stream = generateChatResponseStream(
       OPENAI_API_KEY,
       clinicData,
@@ -637,15 +653,17 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
       });
     }
 
-    // Try to auto-submit booking if user provided info
-    try {
-      const booking = await tryAutoSubmitBooking(chatbot, conversationHistory, message, user.id);
-      if (booking) {
-        console.log(`Widget auto-submitted booking ${booking.id} for chatbot ${chatbotId}`);
-        res.write(`data: ${JSON.stringify({ bookingSubmitted: true, bookingId: booking.id })}\n\n`);
+    // Try to auto-submit booking if user provided info and booking intent was detected
+    if (bookingIntent) {
+      try {
+        const booking = await tryAutoSubmitBooking(chatbot, conversationHistory, message, user.id);
+        if (booking) {
+          console.log(`Widget auto-submitted booking ${booking.id} for chatbot ${chatbotId}`);
+          res.write(`data: ${JSON.stringify({ bookingSubmitted: true, bookingId: booking.id })}\n\n`);
+        }
+      } catch (bookingError) {
+        console.error('Widget auto-booking error:', bookingError);
       }
-    } catch (bookingError) {
-      console.error('Widget auto-booking error:', bookingError);
     }
 
     // Increment usage
