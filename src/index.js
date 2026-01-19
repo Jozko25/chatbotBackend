@@ -15,6 +15,7 @@ import usageRoutes from './routes/usage.js';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
 // CORS for frontend
