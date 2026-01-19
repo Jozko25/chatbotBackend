@@ -121,6 +121,58 @@ router.put('/:id/theme', async (req, res) => {
   }
 });
 
+// Update chatbot AI settings (system prompt, knowledge base, welcome message)
+router.put('/:id/settings', async (req, res) => {
+  const { systemPrompt, customKnowledge, welcomeMessage, clinicData } = req.body;
+
+  try {
+    // Build update data - only include fields that are provided
+    const updateData = {};
+
+    if (systemPrompt !== undefined) {
+      updateData.systemPrompt = systemPrompt || null;
+    }
+    if (customKnowledge !== undefined) {
+      updateData.customKnowledge = customKnowledge || null;
+    }
+    if (welcomeMessage !== undefined) {
+      updateData.welcomeMessage = welcomeMessage || null;
+    }
+    if (clinicData !== undefined) {
+      // Merge with existing clinicData to allow partial updates
+      const existing = await prisma.chatbot.findFirst({
+        where: { id: req.params.id, userId: req.user.id },
+        select: { clinicData: true }
+      });
+      if (existing) {
+        updateData.clinicData = { ...existing.clinicData, ...clinicData };
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const result = await prisma.chatbot.updateMany({
+      where: {
+        id: req.params.id,
+        userId: req.user.id,
+        status: { not: 'DELETED' }
+      },
+      data: updateData
+    });
+
+    if (result.count === 0) {
+      return res.status(404).json({ error: 'Chatbot not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating chatbot settings:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
 // Update chatbot status (pause/activate)
 router.put('/:id/status', async (req, res) => {
   const { status } = req.body;

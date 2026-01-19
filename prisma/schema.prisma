@@ -57,6 +57,11 @@ model Chatbot {
   clinicData      Json      @map("clinic_data")
   rawContent      String?   @map("raw_content") @db.Text
 
+  // Customizable AI settings
+  systemPrompt    String?   @map("system_prompt") @db.Text
+  customKnowledge String?   @map("custom_knowledge") @db.Text
+  welcomeMessage  String?   @map("welcome_message")
+
   // Theme/customization
   theme           Json      @default("{}")
 

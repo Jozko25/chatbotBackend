@@ -183,6 +183,12 @@ app.post('/api/chat/stream', protectedRoute, chatLimiter, checkMessageLimit, asy
     raw_content: chatbot.rawContent
   };
 
+  // Get custom AI settings
+  const aiOptions = {
+    systemPrompt: chatbot.systemPrompt || null,
+    customKnowledge: chatbot.customKnowledge || null
+  };
+
   // Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -195,7 +201,8 @@ app.post('/api/chat/stream', protectedRoute, chatLimiter, checkMessageLimit, asy
       OPENAI_API_KEY,
       clinicData,
       conversationHistory || [],
-      message
+      message,
+      aiOptions
     );
 
     let fullResponse = '';
@@ -333,6 +340,12 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
     raw_content: chatbot.rawContent
   };
 
+  // Get custom AI settings
+  const aiOptions = {
+    systemPrompt: chatbot.systemPrompt || null,
+    customKnowledge: chatbot.customKnowledge || null
+  };
+
   // Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -345,7 +358,8 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
       OPENAI_API_KEY,
       clinicData,
       conversationHistory || [],
-      message
+      message,
+      aiOptions
     );
 
     let fullResponse = '';

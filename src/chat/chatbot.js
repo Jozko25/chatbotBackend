@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 
-const SYSTEM_PROMPT = `You are a helpful virtual assistant for a business website. Your role is to help visitors find information about products, services, prices, opening hours, and contact details.
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful virtual assistant for a business website. Your role is to help visitors find information about products, services, prices, opening hours, and contact details.
 
 STRICT RULES YOU MUST FOLLOW:
 
@@ -26,8 +26,12 @@ You represent this business - be helpful within these boundaries.`;
 
 /**
  * Build context from clinic data based on query
+ * @param {object} clinicData - The clinic/business data
+ * @param {string} query - User's query
+ * @param {object} detectedIntents - Detected intents from LLM
+ * @param {string} customKnowledge - Optional custom knowledge to append
  */
-function buildContext(clinicData, query, detectedIntents = {}) {
+function buildContext(clinicData, query, detectedIntents = {}, customKnowledge = null) {
   const queryLower = query.toLowerCase();
   const chunks = [];
 
@@ -138,6 +142,11 @@ function buildContext(clinicData, query, detectedIntents = {}) {
     }
   }
 
+  // Add custom knowledge if provided
+  if (customKnowledge && customKnowledge.trim()) {
+    chunks.push(`ADDITIONAL KNOWLEDGE (provided by business owner):\n${customKnowledge.trim()}`);
+  }
+
   return chunks.join('\n\n---\n\n');
 }
 
@@ -177,15 +186,23 @@ async function detectIntent(apiKey, query) {
 
 /**
  * Generate chat response
+ * @param {string} apiKey - OpenAI API key
+ * @param {object} clinicData - The clinic/business data
+ * @param {array} conversationHistory - Previous messages
+ * @param {string} userMessage - Current user message
+ * @param {object} options - Optional settings (systemPrompt, customKnowledge)
  */
-export async function generateChatResponse(apiKey, clinicData, conversationHistory, userMessage) {
+export async function generateChatResponse(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const client = new OpenAI({ apiKey });
 
+  const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const customKnowledge = options.customKnowledge || null;
+
   const intents = await detectIntent(apiKey, userMessage);
-  const context = buildContext(clinicData, userMessage, intents);
+  const context = buildContext(clinicData, userMessage, intents, customKnowledge);
 
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'system', content: `CONTEXT FROM BUSINESS WEBSITE:\n\n${context}` },
     ...conversationHistory.slice(-16),
     { role: 'user', content: userMessage }
@@ -219,15 +236,24 @@ export async function generateChatResponse(apiKey, clinicData, conversationHisto
 
 /**
  * Generate streaming chat response
+ * @param {string} apiKey - OpenAI API key
+ * @param {object} clinicData - The clinic/business data
+ * @param {array} conversationHistory - Previous messages
+ * @param {string} userMessage - Current user message
+ * @param {object} options - Optional settings (systemPrompt, customKnowledge)
  * @yields {string} Text chunks as they arrive
  */
-export async function* generateChatResponseStream(apiKey, clinicData, conversationHistory, userMessage) {
+export async function* generateChatResponseStream(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const client = new OpenAI({ apiKey });
+
+  const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const customKnowledge = options.customKnowledge || null;
+
   const intents = await detectIntent(apiKey, userMessage);
-  const context = buildContext(clinicData, userMessage, intents);
+  const context = buildContext(clinicData, userMessage, intents, customKnowledge);
 
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'system', content: `CONTEXT FROM BUSINESS WEBSITE:\n\n${context}` },
     ...conversationHistory.slice(-16),
     { role: 'user', content: userMessage }
@@ -235,7 +261,7 @@ export async function* generateChatResponseStream(apiKey, clinicData, conversati
 
   // Debug: log what we're sending to the LLM
   console.log('\n========== LLM REQUEST ==========');
-  console.log('SYSTEM PROMPT:', SYSTEM_PROMPT.slice(0, 500) + '...');
+  console.log('SYSTEM PROMPT:', systemPrompt.slice(0, 500) + '...');
   console.log('\nCONTEXT (first 2000 chars):', context.slice(0, 2000));
   console.log('\nUSER MESSAGE:', userMessage);
   console.log('==================================\n');
