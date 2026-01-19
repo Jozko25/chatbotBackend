@@ -37,6 +37,17 @@ STRICT RULES YOU MUST FOLLOW:
 
 You represent this business - be helpful within these boundaries.`;
 
+// Field labels for booking
+const BOOKING_FIELD_LABELS = {
+  name: 'Full Name',
+  email: 'Email Address',
+  phone: 'Phone Number',
+  service: 'Service/Product',
+  preferredDate: 'Preferred Date',
+  preferredTime: 'Preferred Time',
+  notes: 'Additional Notes'
+};
+
 /**
  * Build system prompt with communication style
  */
@@ -65,6 +76,18 @@ function buildSystemPrompt(basePrompt, options = {}) {
   // Add custom greeting instruction
   if (options.customGreeting) {
     prompt += `\n\nCUSTOM GREETING: When starting a conversation or greeting the user, use this greeting: "${options.customGreeting}"`;
+  }
+  
+  // Add booking instructions based on configured fields
+  if (options.bookingEnabled && options.bookingFields && options.bookingFields.length > 0) {
+    const fieldsList = options.bookingFields
+      .map(field => `- ${BOOKING_FIELD_LABELS[field] || field}`)
+      .join('\n');
+    
+    const bookingPrompt = options.bookingPromptMessage || 
+      'When a user wants to book an appointment or request a service, collect the following information:';
+    
+    prompt += `\n\nBOOKING INSTRUCTIONS:\n${bookingPrompt}\n${fieldsList}\n\nOnce you have collected the required information, confirm the details with the user and let them know you'll submit their booking request.`;
   }
   
   return prompt;

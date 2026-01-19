@@ -76,6 +76,7 @@ model Chatbot {
   // Booking settings
   bookingEnabled      Boolean   @default(true) @map("booking_enabled")
   bookingFields       String[]  @default(["name", "email", "phone", "service", "preferredDate", "notes"]) @map("booking_fields")
+  bookingPromptMessage String?  @map("booking_prompt_message") @db.Text
 
   // Theme/customization
   theme           Json      @default("{}")

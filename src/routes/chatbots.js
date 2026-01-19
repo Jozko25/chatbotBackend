@@ -182,6 +182,7 @@ router.put('/:id/notifications', async (req, res) => {
     notifyOnMessage,
     bookingEnabled,
     bookingFields,
+    bookingPromptMessage,
     communicationStyle,
     language,
     customGreeting
@@ -222,6 +223,9 @@ router.put('/:id/notifications', async (req, res) => {
     }
     if (bookingFields !== undefined && Array.isArray(bookingFields)) {
       updateData.bookingFields = bookingFields;
+    }
+    if (bookingPromptMessage !== undefined) {
+      updateData.bookingPromptMessage = bookingPromptMessage || null;
     }
 
     // Communication style settings

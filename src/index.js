@@ -414,7 +414,10 @@ app.post('/api/chat/stream', protectedRoute, chatLimiter, checkMessageLimit, asy
     customKnowledge: chatbot.customKnowledge || null,
     communicationStyle: chatbot.communicationStyle || 'PROFESSIONAL',
     language: chatbot.language || 'auto',
-    customGreeting: chatbot.customGreeting || null
+    customGreeting: chatbot.customGreeting || null,
+    bookingEnabled: chatbot.bookingEnabled || false,
+    bookingFields: chatbot.bookingFields || ['name', 'email', 'phone', 'service', 'preferredDate', 'notes'],
+    bookingPromptMessage: chatbot.bookingPromptMessage || null
   };
 
   // Set SSE headers
@@ -586,7 +589,9 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
     communicationStyle: chatbot.communicationStyle || 'PROFESSIONAL',
     language: chatbot.language || 'auto',
     customGreeting: chatbot.customGreeting || null,
-    bookingEnabled: chatbot.bookingEnabled || false
+    bookingEnabled: chatbot.bookingEnabled || false,
+    bookingFields: chatbot.bookingFields || ['name', 'email', 'phone', 'service', 'preferredDate', 'notes'],
+    bookingPromptMessage: chatbot.bookingPromptMessage || null
   };
 
   // Set SSE headers
