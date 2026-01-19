@@ -11,6 +11,9 @@ import { apiLimiter, scrapeLimiter, chatLimiter, widgetLimiter } from './middlew
 import chatbotRoutes from './routes/chatbots.js';
 import apiKeyRoutes from './routes/apiKeys.js';
 import usageRoutes from './routes/usage.js';
+import bookingRoutes from './routes/bookings.js';
+import { sendBookingNotifications } from './services/notifications.js';
+import { extractBookingData } from './chat/chatbot.js';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -55,6 +58,7 @@ app.get('/api/config', (req, res) => {
 app.use('/api/chatbots', protectedRoute, chatbotRoutes);
 app.use('/api/api-keys', protectedRoute, apiKeyRoutes);
 app.use('/api/usage', protectedRoute, usageRoutes);
+app.use('/api/bookings', protectedRoute, bookingRoutes);
 
 // ============================================
 // SCRAPE ENDPOINT WITH STREAMING (protected, creates chatbot)
@@ -314,10 +318,13 @@ app.post('/api/chat/stream', protectedRoute, chatLimiter, checkMessageLimit, asy
     raw_content: chatbot.rawContent
   };
 
-  // Get custom AI settings
+  // Get custom AI settings including communication style
   const aiOptions = {
     systemPrompt: chatbot.systemPrompt || null,
-    customKnowledge: chatbot.customKnowledge || null
+    customKnowledge: chatbot.customKnowledge || null,
+    communicationStyle: chatbot.communicationStyle || 'PROFESSIONAL',
+    language: chatbot.language || 'auto',
+    customGreeting: chatbot.customGreeting || null
   };
 
   // Set SSE headers
@@ -471,10 +478,14 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
     raw_content: chatbot.rawContent
   };
 
-  // Get custom AI settings
+  // Get custom AI settings including communication style
   const aiOptions = {
     systemPrompt: chatbot.systemPrompt || null,
-    customKnowledge: chatbot.customKnowledge || null
+    customKnowledge: chatbot.customKnowledge || null,
+    communicationStyle: chatbot.communicationStyle || 'PROFESSIONAL',
+    language: chatbot.language || 'auto',
+    customGreeting: chatbot.customGreeting || null,
+    bookingEnabled: chatbot.bookingEnabled || false
   };
 
   // Set SSE headers
@@ -532,6 +543,139 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
     console.error('Widget stream error:', error);
     res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
     res.end();
+  }
+});
+
+// Widget booking submission endpoint (API key auth)
+app.post('/api/widget/booking', validateApiKey, widgetLimiter, async (req, res) => {
+  const { chatbotId, conversationHistory, bookingData, sessionId } = req.body;
+  const user = req.user;
+  const apiKeyData = req.apiKeyData;
+
+  if (!chatbotId) return res.status(400).json({ error: 'Chatbot ID required' });
+
+  // Check if API key is scoped to this chatbot
+  if (apiKeyData.chatbotId && apiKeyData.chatbotId !== chatbotId) {
+    return res.status(403).json({ error: 'API key not valid for this chatbot' });
+  }
+
+  // Get chatbot with notification settings
+  const chatbot = await prisma.chatbot.findFirst({
+    where: {
+      id: chatbotId,
+      userId: user.id,
+      status: 'ACTIVE'
+    }
+  });
+
+  if (!chatbot) {
+    return res.status(404).json({ error: 'Chatbot not found' });
+  }
+
+  if (!chatbot.bookingEnabled) {
+    return res.status(400).json({ error: 'Booking is not enabled for this chatbot' });
+  }
+
+  try {
+    // If conversationHistory provided, extract booking data from conversation
+    let finalBookingData = bookingData || {};
+    
+    if (conversationHistory && conversationHistory.length > 0 && OPENAI_API_KEY) {
+      const extracted = await extractBookingData(OPENAI_API_KEY, conversationHistory);
+      // Merge extracted with provided data (provided takes precedence)
+      finalBookingData = {
+        customerName: bookingData?.customerName || extracted.customerName,
+        customerEmail: bookingData?.customerEmail || extracted.customerEmail,
+        customerPhone: bookingData?.customerPhone || extracted.customerPhone,
+        service: bookingData?.service || extracted.service,
+        preferredDate: bookingData?.preferredDate || extracted.preferredDate,
+        preferredTime: bookingData?.preferredTime || extracted.preferredTime,
+        notes: bookingData?.notes || extracted.notes,
+        ...bookingData
+      };
+    }
+
+    // Validate we have minimum required data
+    if (!finalBookingData.customerName && !finalBookingData.customerPhone && !finalBookingData.customerEmail) {
+      return res.status(400).json({ 
+        error: 'Insufficient booking data. At least name, phone, or email is required.',
+        code: 'INSUFFICIENT_DATA'
+      });
+    }
+
+    // Get conversation ID if exists
+    let conversationId = null;
+    if (sessionId) {
+      const conversation = await prisma.conversation.findUnique({
+        where: {
+          chatbotId_sessionId: { chatbotId, sessionId }
+        }
+      });
+      conversationId = conversation?.id;
+    }
+
+    // Create booking request
+    const booking = await prisma.bookingRequest.create({
+      data: {
+        chatbotId,
+        conversationId,
+        customerName: finalBookingData.customerName || null,
+        customerEmail: finalBookingData.customerEmail || null,
+        customerPhone: finalBookingData.customerPhone || null,
+        service: finalBookingData.service || null,
+        preferredDate: finalBookingData.preferredDate || null,
+        preferredTime: finalBookingData.preferredTime || null,
+        notes: finalBookingData.notes || null,
+        data: finalBookingData,
+        status: 'PENDING'
+      }
+    });
+
+    // Track usage
+    await prisma.usageRecord.create({
+      data: {
+        userId: user.id,
+        chatbotId,
+        eventType: 'BOOKING_REQUEST',
+        date: new Date()
+      }
+    });
+
+    // Send notifications
+    let notificationResults = {};
+    if (chatbot.notifyOnBooking) {
+      notificationResults = await sendBookingNotifications(booking, chatbot);
+      
+      // Update booking with notification status
+      const emailSuccess = notificationResults.email?.success;
+      const webhookSuccess = notificationResults.webhook?.success;
+      
+      await prisma.bookingRequest.update({
+        where: { id: booking.id },
+        data: {
+          status: (emailSuccess || webhookSuccess) ? 'NOTIFIED' : 'PENDING',
+          notificationSent: emailSuccess || webhookSuccess || false,
+          notificationSentAt: (emailSuccess || webhookSuccess) ? new Date() : null,
+          notificationError: notificationResults.email?.error || notificationResults.webhook?.error || null
+        }
+      });
+    }
+
+    console.log(`Booking created: ${booking.id} for chatbot ${chatbotId}`);
+    console.log(`  Customer: ${finalBookingData.customerName || 'N/A'}`);
+    console.log(`  Phone: ${finalBookingData.customerPhone || 'N/A'}`);
+    console.log(`  Service: ${finalBookingData.service || 'N/A'}`);
+    console.log(`  Notifications:`, notificationResults);
+
+    res.json({
+      success: true,
+      bookingId: booking.id,
+      notified: notificationResults.email?.success || notificationResults.webhook?.success || false
+    });
+
+  } catch (error) {
+    console.error('Booking submission error:', error);
+    res.status(500).json({ error: 'Failed to submit booking request' });
   }
 });
 

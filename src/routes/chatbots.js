@@ -173,6 +173,96 @@ router.put('/:id/settings', async (req, res) => {
   }
 });
 
+// Update notification & communication settings
+router.put('/:id/notifications', async (req, res) => {
+  const {
+    notificationEmail,
+    notificationWebhook,
+    notifyOnBooking,
+    notifyOnMessage,
+    bookingEnabled,
+    bookingFields,
+    communicationStyle,
+    language,
+    customGreeting
+  } = req.body;
+
+  try {
+    const updateData = {};
+
+    // Notification settings
+    if (notificationEmail !== undefined) {
+      // Validate email format if provided
+      if (notificationEmail && !notificationEmail.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+        return res.status(400).json({ error: 'Invalid email format' });
+      }
+      updateData.notificationEmail = notificationEmail || null;
+    }
+    if (notificationWebhook !== undefined) {
+      // Validate URL format if provided
+      if (notificationWebhook) {
+        try {
+          new URL(notificationWebhook);
+        } catch {
+          return res.status(400).json({ error: 'Invalid webhook URL format' });
+        }
+      }
+      updateData.notificationWebhook = notificationWebhook || null;
+    }
+    if (notifyOnBooking !== undefined) {
+      updateData.notifyOnBooking = Boolean(notifyOnBooking);
+    }
+    if (notifyOnMessage !== undefined) {
+      updateData.notifyOnMessage = Boolean(notifyOnMessage);
+    }
+
+    // Booking settings
+    if (bookingEnabled !== undefined) {
+      updateData.bookingEnabled = Boolean(bookingEnabled);
+    }
+    if (bookingFields !== undefined && Array.isArray(bookingFields)) {
+      updateData.bookingFields = bookingFields;
+    }
+
+    // Communication style settings
+    if (communicationStyle !== undefined) {
+      const validStyles = ['PROFESSIONAL', 'FRIENDLY', 'CASUAL', 'CONCISE'];
+      if (!validStyles.includes(communicationStyle)) {
+        return res.status(400).json({ error: `Invalid communication style. Must be one of: ${validStyles.join(', ')}` });
+      }
+      updateData.communicationStyle = communicationStyle;
+    }
+    if (language !== undefined) {
+      updateData.language = language || 'auto';
+    }
+    if (customGreeting !== undefined) {
+      updateData.customGreeting = customGreeting || null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const result = await prisma.chatbot.updateMany({
+      where: {
+        id: req.params.id,
+        userId: req.user.id,
+        status: { not: 'DELETED' }
+      },
+      data: updateData
+    });
+
+    if (result.count === 0) {
+      return res.status(404).json({ error: 'Chatbot not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating notification settings:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
 // Update chatbot status (pause/activate)
 router.put('/:id/status', async (req, res) => {
   const { status } = req.body;

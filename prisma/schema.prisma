@@ -62,6 +62,21 @@ model Chatbot {
   customKnowledge String?   @map("custom_knowledge") @db.Text
   welcomeMessage  String?   @map("welcome_message")
 
+  // Communication style
+  communicationStyle CommunicationStyle @default(PROFESSIONAL) @map("communication_style")
+  language        String    @default("auto") // auto, sk, cs, en, etc.
+  customGreeting  String?   @map("custom_greeting") @db.Text
+
+  // Notification settings
+  notificationEmail   String?   @map("notification_email")
+  notificationWebhook String?   @map("notification_webhook")
+  notifyOnBooking     Boolean   @default(true) @map("notify_on_booking")
+  notifyOnMessage     Boolean   @default(false) @map("notify_on_message")
+
+  // Booking settings
+  bookingEnabled      Boolean   @default(true) @map("booking_enabled")
+  bookingFields       String[]  @default(["name", "email", "phone", "service", "preferredDate", "notes"]) @map("booking_fields")
+
   // Theme/customization
   theme           Json      @default("{}")
 
@@ -78,10 +93,18 @@ model Chatbot {
   conversations   Conversation[]
   apiKeys         ApiKey[]
   usageRecords    UsageRecord[]
+  bookingRequests BookingRequest[]
 
   @@index([userId])
   @@index([sourceUrl])
   @@map("chatbots")
+}
+
+enum CommunicationStyle {
+  PROFESSIONAL  // Formal, business-like
+  FRIENDLY      // Warm, conversational
+  CASUAL        // Relaxed, informal
+  CONCISE       // Brief, to-the-point
 }
 
 enum ChatbotStatus {
@@ -220,4 +243,57 @@ enum UsageEventType {
   CHAT_MESSAGE
   EMBED_COPY
   WIDGET_LOAD
+  BOOKING_REQUEST
+}
+
+// ============================================
+// BOOKING REQUESTS
+// ============================================
+
+model BookingRequest {
+  id              String    @id @default(cuid())
+  chatbotId       String    @map("chatbot_id")
+  conversationId  String?   @map("conversation_id")
+
+  // Customer data collected from chat
+  customerName    String?   @map("customer_name")
+  customerEmail   String?   @map("customer_email")
+  customerPhone   String?   @map("customer_phone")
+
+  // Booking details
+  service         String?
+  preferredDate   String?   @map("preferred_date")
+  preferredTime   String?   @map("preferred_time")
+  notes           String?   @db.Text
+
+  // All collected data as JSON (flexible)
+  data            Json      @default("{}")
+
+  // Status
+  status          BookingStatus @default(PENDING)
+
+  // Notification tracking
+  notificationSent    Boolean   @default(false) @map("notification_sent")
+  notificationSentAt  DateTime? @map("notification_sent_at")
+  notificationError   String?   @map("notification_error")
+
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  chatbot         Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+
+  @@index([chatbotId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("booking_requests")
+}
+
+enum BookingStatus {
+  PENDING     // Just submitted, not processed
+  NOTIFIED    // Notification sent to business
+  CONFIRMED   // Business confirmed the booking
+  CANCELLED   // Booking was cancelled
+  COMPLETED   // Booking was completed
 }

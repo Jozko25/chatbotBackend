@@ -1,5 +1,13 @@
 import OpenAI from 'openai';
 
+// Communication style prompts
+const STYLE_PROMPTS = {
+  PROFESSIONAL: 'Use a professional, business-like tone. Be formal and courteous.',
+  FRIENDLY: 'Use a warm, friendly tone. Be conversational and approachable while remaining helpful.',
+  CASUAL: 'Use a relaxed, casual tone. Be informal and personable, like chatting with a friend.',
+  CONCISE: 'Be brief and to-the-point. Give short, direct answers without unnecessary elaboration.'
+};
+
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful virtual assistant for a business website. Your role is to help visitors find information about products, services, prices, opening hours, and contact details.
 
 STRICT RULES YOU MUST FOLLOW:
@@ -22,7 +30,45 @@ STRICT RULES YOU MUST FOLLOW:
 
 9. When helping users choose between options (e.g., cars, products, plans), use the available data to make informed recommendations based on their stated preferences.
 
+10. BOOKING REQUESTS: If the user wants to book, schedule, or make an appointment:
+    - Collect their name, phone number, email (optional), preferred service, and preferred date/time
+    - Once you have the essential info (at least name and phone), confirm the details and let them know you'll submit the booking request
+    - Be helpful in suggesting available services from the context
+
 You represent this business - be helpful within these boundaries.`;
+
+/**
+ * Build system prompt with communication style
+ */
+function buildSystemPrompt(basePrompt, options = {}) {
+  let prompt = basePrompt || DEFAULT_SYSTEM_PROMPT;
+  
+  // Add communication style
+  if (options.communicationStyle && STYLE_PROMPTS[options.communicationStyle]) {
+    prompt += `\n\nCOMMUNICATION STYLE: ${STYLE_PROMPTS[options.communicationStyle]}`;
+  }
+  
+  // Add language preference
+  if (options.language && options.language !== 'auto') {
+    const langMap = {
+      'sk': 'Slovak',
+      'cs': 'Czech',
+      'en': 'English',
+      'de': 'German',
+      'hu': 'Hungarian',
+      'pl': 'Polish'
+    };
+    const langName = langMap[options.language] || options.language;
+    prompt += `\n\nLANGUAGE: Always respond in ${langName}, regardless of what language the user writes in.`;
+  }
+  
+  // Add custom greeting instruction
+  if (options.customGreeting) {
+    prompt += `\n\nCUSTOM GREETING: When starting a conversation or greeting the user, use this greeting: "${options.customGreeting}"`;
+  }
+  
+  return prompt;
+}
 
 /**
  * Build context from clinic data based on query
@@ -188,27 +234,33 @@ function buildContext(clinicData, query, detectedIntents = {}, customKnowledge =
 /**
  * Detect user intent (multilingual) using LLM to avoid language-specific heuristics
  */
-async function detectIntent(apiKey, query) {
+async function detectIntent(apiKey, query, conversationHistory = []) {
   const client = new OpenAI({ apiKey });
 
-  const prompt = `Classify the user's request (any language). Respond ONLY with JSON:
+  const prompt = `Classify the user's request (any language). Consider the conversation context. Respond ONLY with JSON:
 {
-  "price": boolean,   // asking about price or cost
-  "service": boolean, // asking about services/treatments/offers
-  "contact": boolean, // asking about location, address, phone, contact, branches
-  "hours": boolean,   // asking about opening hours/schedule
-  "doctors": boolean  // asking about staff, doctors, team
+  "price": boolean,      // asking about price or cost
+  "service": boolean,    // asking about services/treatments/offers
+  "contact": boolean,    // asking about location, address, phone, contact, branches
+  "hours": boolean,      // asking about opening hours/schedule
+  "doctors": boolean,    // asking about staff, doctors, team
+  "booking": boolean,    // wants to book/schedule/make an appointment/reservation
+  "providingInfo": boolean // user is providing personal info (name, phone, email, date preference)
 }`;
 
   try {
+    // Include last few messages for context
+    const contextMessages = conversationHistory.slice(-4).map(m => `${m.role}: ${m.content}`).join('\n');
+    const fullQuery = contextMessages ? `Previous context:\n${contextMessages}\n\nCurrent message: ${query}` : query;
+
     const response = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user', content: query }
+        { role: 'user', content: fullQuery }
       ],
       temperature: 0.1,
-      max_tokens: 150,
+      max_tokens: 200,
       response_format: { type: 'json_object' }
     });
 
@@ -220,20 +272,65 @@ async function detectIntent(apiKey, query) {
 }
 
 /**
+ * Extract booking information from conversation
+ * @param {string} apiKey - OpenAI API key
+ * @param {array} conversationHistory - Full conversation history
+ * @returns {object} - Extracted booking data
+ */
+export async function extractBookingData(apiKey, conversationHistory) {
+  const client = new OpenAI({ apiKey });
+
+  const prompt = `Analyze this conversation and extract any booking/appointment information provided by the user.
+Return ONLY JSON with the following fields (use null for fields not provided):
+{
+  "customerName": string or null,
+  "customerEmail": string or null,
+  "customerPhone": string or null,
+  "service": string or null,       // what service they want
+  "preferredDate": string or null, // date they mentioned
+  "preferredTime": string or null, // time they mentioned
+  "notes": string or null,         // any additional notes/requests
+  "isComplete": boolean,           // true if we have at least name AND (phone OR email)
+  "missingFields": string[]        // list of important missing fields
+}`;
+
+  const messages = conversationHistory.map(m => `${m.role}: ${m.content}`).join('\n');
+
+  try {
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: messages }
+      ],
+      temperature: 0.1,
+      max_tokens: 300,
+      response_format: { type: 'json_object' }
+    });
+
+    return JSON.parse(response.choices[0].message.content);
+  } catch (error) {
+    console.error('Booking extraction failed:', error.message);
+    return { isComplete: false, missingFields: ['name', 'phone'] };
+  }
+}
+
+/**
  * Generate chat response
  * @param {string} apiKey - OpenAI API key
  * @param {object} clinicData - The clinic/business data
  * @param {array} conversationHistory - Previous messages
  * @param {string} userMessage - Current user message
- * @param {object} options - Optional settings (systemPrompt, customKnowledge)
+ * @param {object} options - Optional settings (systemPrompt, customKnowledge, communicationStyle, language)
  */
 export async function generateChatResponse(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const client = new OpenAI({ apiKey });
 
-  const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const basePrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const systemPrompt = buildSystemPrompt(basePrompt, options);
   const customKnowledge = options.customKnowledge || null;
 
-  const intents = await detectIntent(apiKey, userMessage);
+  const intents = await detectIntent(apiKey, userMessage, conversationHistory);
   const context = buildContext(clinicData, userMessage, intents, customKnowledge);
 
   const messages = [
@@ -253,7 +350,8 @@ export async function generateChatResponse(apiKey, clinicData, conversationHisto
 
     return {
       success: true,
-      message: response.choices[0].message.content
+      message: response.choices[0].message.content,
+      intents
     };
   } catch (error) {
     console.error('OpenAI error:', error.message);
@@ -275,16 +373,17 @@ export async function generateChatResponse(apiKey, clinicData, conversationHisto
  * @param {object} clinicData - The clinic/business data
  * @param {array} conversationHistory - Previous messages
  * @param {string} userMessage - Current user message
- * @param {object} options - Optional settings (systemPrompt, customKnowledge)
+ * @param {object} options - Optional settings (systemPrompt, customKnowledge, communicationStyle, language)
  * @yields {string} Text chunks as they arrive
  */
 export async function* generateChatResponseStream(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const client = new OpenAI({ apiKey });
 
-  const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const basePrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const systemPrompt = buildSystemPrompt(basePrompt, options);
   const customKnowledge = options.customKnowledge || null;
 
-  const intents = await detectIntent(apiKey, userMessage);
+  const intents = await detectIntent(apiKey, userMessage, conversationHistory);
   const context = buildContext(clinicData, userMessage, intents, customKnowledge);
 
   const messages = [
@@ -299,6 +398,7 @@ export async function* generateChatResponseStream(apiKey, clinicData, conversati
   console.log('SYSTEM PROMPT:', systemPrompt.slice(0, 500) + '...');
   console.log('\nCONTEXT (first 2000 chars):', context.slice(0, 2000));
   console.log('\nUSER MESSAGE:', userMessage);
+  console.log('INTENTS:', JSON.stringify(intents));
   console.log('==================================\n');
 
   try {
