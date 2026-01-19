@@ -43,6 +43,32 @@ function buildContext(clinicData, query, detectedIntents = {}, customKnowledge =
 - Email: ${clinicData.email || 'Not available'}
 - Opening Hours: ${clinicData.opening_hours || 'Not available'}`);
 
+  // High-level positioning content
+  if (clinicData.about) {
+    chunks.push(`ABOUT THE BUSINESS:\n${clinicData.about}`);
+  }
+
+  if (Array.isArray(clinicData.key_benefits) && clinicData.key_benefits.length > 0) {
+    const benefits = clinicData.key_benefits.slice(0, 12).map(b => `- ${b}`).join('\n');
+    chunks.push(`KEY BENEFITS:\n${benefits}`);
+  }
+
+  if (clinicData.target_audience) {
+    chunks.push(`TARGET AUDIENCE:\n${clinicData.target_audience}`);
+  }
+
+  if (clinicData.unique_approach) {
+    chunks.push(`UNIQUE APPROACH:\n${clinicData.unique_approach}`);
+  }
+
+  if (clinicData.testimonials_summary) {
+    chunks.push(`TESTIMONIALS SUMMARY:\n${clinicData.testimonials_summary}`);
+  }
+
+  if (clinicData.additional_info) {
+    chunks.push(`ADDITIONAL INFO:\n${clinicData.additional_info}`);
+  }
+
   // Include services/prices if relevant or always for comprehensive answers
   const priceKeywords = ['price', 'cost', 'how much', 'cena', 'koľko', 'stojí', 'cenník', 'fee', 'stoji'];
   const serviceKeywords = ['service', 'treatment', 'procedure', 'služb', 'ošetren', 'liečb', 'offer', 'do you'];
@@ -125,6 +151,15 @@ function buildContext(clinicData, query, detectedIntents = {}, customKnowledge =
   // Include hours emphasis if specifically requested
   if (wantsHours && clinicData.opening_hours) {
     chunks.push(`OPENING HOURS:\n${clinicData.opening_hours}`);
+  }
+
+  // Include FAQ when available to help with common questions
+  if (Array.isArray(clinicData.faq) && clinicData.faq.length > 0) {
+    const faqs = clinicData.faq
+      .slice(0, 12)
+      .map(f => `Q: ${f.question}\nA: ${f.answer}`)
+      .join('\n\n');
+    chunks.push(`FAQ:\n${faqs}`);
   }
 
   // Search raw content for specific matches

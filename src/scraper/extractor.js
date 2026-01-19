@@ -5,40 +5,36 @@ import OpenAI from 'openai';
  * Uses GPT-4o-mini to intelligently extract structured clinic data from scraped content
  */
 
-const EXTRACTION_PROMPT = `You are a data extraction assistant. Analyze the following scraped website content and extract structured information about the business.
+const EXTRACTION_PROMPT = `You are a data extraction assistant. Extract ALL useful information from the website content below.
 
-IMPORTANT RULES:
-- Only extract information that is EXPLICITLY stated in the content
-- If information is not found, use null
-- For prices, include the currency symbol (€, $, Kč, etc.) and "from" if it's a starting price
-- For opening hours, preserve the exact format from the website
-- Extract ALL products/services with prices you can find
-- Extract ALL team/staff members with their roles if mentioned
-- This could be ANY type of business: car dealership, e-commerce, SaaS, restaurant, clinic, etc.
+RULES:
+- Extract EVERYTHING that could help answer questions about this business
+- If something is not found, use null
+- For services: extract ALL offerings, even without prices. Use "Contact for pricing" if no price.
+- Be thorough - extract every service, feature, benefit, and capability mentioned
 
-EXTRACTION TIPS:
-- For car dealerships: Extract car models as products (e.g., "GLE 450d 4MATIC" with starting price)
-- For e-commerce: Extract products with their prices and categories
-- For clinics: Extract treatments/procedures with prices
-- For SaaS: Extract plans/tiers with their pricing
-- Clean up concatenated text (e.g., "Konfigurovať vozidloZistiť viacGLE" → just "GLE")
-- If you see patterns like "cena od X €" extract it as "from X €"
-- Extract key specifications when available (engine, features, capacity, etc.) in the category field
-
-Return a JSON object with this exact structure:
+Return JSON with this structure:
 {
-  "clinic_name": "The official name of the business/company (not taglines or slogans)",
-  "address": "Full address if found",
-  "phone": "Primary phone number",
-  "email": "Primary email",
-  "opening_hours": "Opening hours exactly as stated, preserve formatting",
+  "clinic_name": "Business/company name",
+  "address": "Address or location (city, country)",
+  "phone": "Phone number",
+  "email": "Email address",
+  "opening_hours": "Opening hours if mentioned",
   "services": [
-    {"name": "Clean product/service name", "price": "Price with currency (use 'from X €' for starting prices)", "category": "Category or key specs"}
+    {"name": "Service/product name", "price": "Price or 'Contact for pricing'", "category": "Brief description of what it is/does"}
   ],
   "doctors": [
-    {"name": "Full name with title if any", "specialization": "Their role/specialty"}
+    {"name": "Person's name", "specialization": "Their role/title"}
   ],
-  "additional_info": "Any other important business information (shipping, policies, etc.)"
+  "about": "What the business does, who it helps, its mission/approach (2-3 sentences)",
+  "key_benefits": ["Benefit 1", "Benefit 2", "..."],
+  "target_audience": "Who this business serves",
+  "unique_approach": "What makes this business different or their methodology",
+  "faq": [
+    {"question": "Common question", "answer": "Answer from content"}
+  ],
+  "testimonials_summary": "Summary of what clients say if testimonials exist",
+  "additional_info": "Any other important info (policies, guarantees, etc.)"
 }
 
 SCRAPED CONTENT:
@@ -50,52 +46,41 @@ SCRAPED CONTENT:
 export async function extractWithLLM(apiKey, rawContent, pageData) {
   const client = new OpenAI({ apiKey });
 
-  // Prepare content for extraction - prioritize important pages
-  const contentChunks = [];
-
-  // Add homepage/main content first
-  const homepage = pageData.find(p =>
-    p.url.match(/\/$/) || p.url.match(/\.sk\/?$/) || p.url.match(/\.com\/?$/)
+  // Simply include ALL pages - let the LLM figure out what's important
+  // Sort by content length (most content first) to prioritize richer pages
+  const sortedPages = [...pageData].sort((a, b) =>
+    (b.content?.length || 0) - (a.content?.length || 0)
   );
-  if (homepage) {
-    contentChunks.push(`=== HOMEPAGE ===\nTitle: ${homepage.title}\nURL: ${homepage.url}\n${homepage.content?.slice(0, 3000)}`);
+
+  const contentChunks = [];
+  let totalChars = 0;
+  const maxTotalChars = 30000;
+
+  for (const page of sortedPages) {
+    if (totalChars >= maxTotalChars) break;
+
+    const remainingChars = maxTotalChars - totalChars;
+    const pageContent = page.content?.slice(0, Math.min(remainingChars, 5000)) || '';
+
+    if (pageContent.length > 50) { // Skip nearly empty pages
+      contentChunks.push(`=== PAGE: ${page.title || page.url} ===\nURL: ${page.url}\n${pageContent}`);
+      totalChars += pageContent.length + 100; // +100 for headers
+    }
   }
-
-  // Add contact page
-  const contactPage = pageData.find(p => /kontakt|contact/i.test(p.url));
-  if (contactPage) {
-    contentChunks.push(`=== CONTACT PAGE ===\nTitle: ${contactPage.title}\n${contactPage.content?.slice(0, 2000)}`);
-  }
-
-  // Add pricing pages
-  const pricingPages = pageData.filter(p => /cennik|cenik|price|ceny/i.test(p.url));
-  pricingPages.forEach(p => {
-    contentChunks.push(`=== PRICING: ${p.title} ===\n${p.content?.slice(0, 4000)}`);
-  });
-
-  // Add team/about pages
-  const teamPages = pageData.filter(p => /team|tim|about|o-nas|lekar|doctor/i.test(p.url));
-  teamPages.forEach(p => {
-    contentChunks.push(`=== TEAM/ABOUT: ${p.title} ===\n${p.content?.slice(0, 3000)}`);
-  });
-
-  // Add product/model pages (for car dealerships, e-commerce, etc.)
-  const productPages = pageData.filter(p => /models|model|product|vozidl|sedan|suv|coupe|kombi|hatchback/i.test(p.url));
-  productPages.forEach(p => {
-    contentChunks.push(`=== PRODUCTS/MODELS: ${p.title} ===\n${p.content?.slice(0, 4000)}`);
-  });
 
   // Add any extracted prices from scraper
   const allPrices = pageData.flatMap(p => p.prices || []);
-  if (allPrices.length > 0) {
+  if (allPrices.length > 0 && totalChars < maxTotalChars) {
     contentChunks.push(`=== EXTRACTED PRICES ===\n${allPrices.map(p => p.text).join('\n')}`);
   }
 
-  // Combine and limit total content
-  const combinedContent = contentChunks.join('\n\n---\n\n').slice(0, 25000);
+  const combinedContent = contentChunks.join('\n\n---\n\n');
 
   try {
     console.log('Extracting data with LLM...');
+    console.log(`  - Content chunks: ${contentChunks.length}`);
+    console.log(`  - Total content length: ${combinedContent.length} chars`);
+    console.log(`  - Pages included: ${contentChunks.length}`);
 
     const response = await client.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -155,12 +140,12 @@ export function mergeExtractedData(llmData, regexData) {
 
     const merged = [];
     llmServices.forEach(addService);
-    regexServices.forEach(addService); // add missing tail items from regex scrape
+    regexServices.forEach(addService);
 
     return merged;
   })();
 
-  // Merge doctors: keep LLM enrichments but don't drop regex doctors
+  // Merge doctors/team members
   const mergedDoctors = (() => {
     const llmDoctors = Array.isArray(llmData.doctors) ? llmData.doctors : [];
     const regexDoctors = Array.isArray(regexData.doctors) ? regexData.doctors : [];
@@ -181,8 +166,14 @@ export function mergeExtractedData(llmData, regexData) {
     llmDoctors.forEach(addDoctor);
     regexDoctors.forEach(addDoctor);
 
-    // If both are empty, return empty array to keep shape consistent
     return merged;
+  })();
+
+  // Merge FAQ
+  const mergedFaq = (() => {
+    const llmFaq = Array.isArray(llmData.faq) ? llmData.faq : [];
+    const regexFaq = Array.isArray(regexData.faq) ? regexData.faq : [];
+    return [...llmFaq, ...regexFaq];
   })();
 
   return {
@@ -193,9 +184,15 @@ export function mergeExtractedData(llmData, regexData) {
     opening_hours: llmData.opening_hours || regexData.opening_hours,
     services: mergedServices,
     doctors: mergedDoctors,
-    faq: regexData.faq || [],
+    faq: mergedFaq,
     source_pages: regexData.source_pages,
     raw_content: regexData.raw_content,
+    // New fields from improved extraction
+    about: llmData.about || '',
+    key_benefits: Array.isArray(llmData.key_benefits) ? llmData.key_benefits : [],
+    target_audience: llmData.target_audience || '',
+    unique_approach: llmData.unique_approach || '',
+    testimonials_summary: llmData.testimonials_summary || '',
     additional_info: llmData.additional_info || ''
   };
 }
