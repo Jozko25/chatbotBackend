@@ -5,9 +5,14 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+# Generate Prisma client
+COPY prisma ./prisma/
+RUN npx prisma generate
+
 COPY . .
 
 ENV PORT=3001
 EXPOSE 3001
 
-CMD ["npm", "start"]
+# Use start:prod which doesn't require .env file (Railway provides env vars)
+CMD ["npm", "run", "start:prod"]

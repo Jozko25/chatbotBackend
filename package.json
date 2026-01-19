@@ -5,17 +5,29 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --env-file=.env --watch src/index.js"
+    "start": "node --env-file=.env src/index.js",
+    "start:prod": "node src/index.js",
+    "dev": "node --env-file=.env --watch src/index.js",
+    "db:push": "npx prisma db push",
+    "db:generate": "npx prisma generate"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.2.0",
+    "@prisma/client": "^7.2.0",
     "cheerio": "^1.0.0-rc.12",
+    "pg": "^8.13.1",
     "cors": "^2.8.5",
     "express": "^4.18.2",
+    "express-oauth2-jwt-bearer": "^1.7.3",
+    "express-rate-limit": "^8.2.1",
     "openai": "^4.20.0",
-    "playwright": "1.48.0"
+    "playwright": "1.48.0",
+    "uuid": "^13.0.0"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "prisma": "^7.2.0"
   }
 }
