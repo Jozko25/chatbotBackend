@@ -289,6 +289,96 @@ app.post('/api/scrape', protectedRoute, scrapeLimiter, checkChatbotLimit, async 
 });
 
 // ============================================
+// HELPER: Auto-detect and submit booking from conversation
+// ============================================
+
+async function tryAutoSubmitBooking(chatbot, conversationHistory, userMessage, userId) {
+  // Only process if booking is enabled
+  if (!chatbot.bookingEnabled) return null;
+
+  // Build full conversation including current message
+  const fullHistory = [
+    ...(conversationHistory || []),
+    { role: 'user', content: userMessage }
+  ];
+
+  // Extract booking data from conversation
+  const bookingData = await extractBookingData(OPENAI_API_KEY, fullHistory);
+  
+  console.log('Booking extraction result:', bookingData);
+
+  // Only submit if we have complete booking data
+  if (!bookingData.isComplete) {
+    return null;
+  }
+
+  // Check if we already submitted this booking recently (prevent duplicates)
+  const recentBooking = await prisma.bookingRequest.findFirst({
+    where: {
+      chatbotId: chatbot.id,
+      customerPhone: bookingData.customerPhone || undefined,
+      customerEmail: bookingData.customerEmail || undefined,
+      createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } // Last 5 minutes
+    }
+  });
+
+  if (recentBooking) {
+    console.log('Booking already submitted recently, skipping:', recentBooking.id);
+    return null;
+  }
+
+  // Create booking request
+  const booking = await prisma.bookingRequest.create({
+    data: {
+      chatbotId: chatbot.id,
+      customerName: bookingData.customerName || null,
+      customerEmail: bookingData.customerEmail || null,
+      customerPhone: bookingData.customerPhone || null,
+      service: bookingData.service || null,
+      preferredDate: bookingData.preferredDate || null,
+      preferredTime: bookingData.preferredTime || null,
+      notes: bookingData.notes || null,
+      data: bookingData,
+      status: 'PENDING'
+    }
+  });
+
+  console.log('Auto-created booking:', booking.id);
+
+  // Track usage
+  await prisma.usageRecord.create({
+    data: {
+      userId,
+      chatbotId: chatbot.id,
+      eventType: 'BOOKING_REQUEST',
+      date: new Date()
+    }
+  });
+
+  // Send notifications
+  if (chatbot.notifyOnBooking && (chatbot.notificationEmail || chatbot.notificationWebhook)) {
+    const notificationResults = await sendBookingNotifications(booking, chatbot);
+    
+    console.log('Notification results:', notificationResults);
+
+    const emailSuccess = notificationResults.email?.success;
+    const webhookSuccess = notificationResults.webhook?.success;
+
+    await prisma.bookingRequest.update({
+      where: { id: booking.id },
+      data: {
+        status: (emailSuccess || webhookSuccess) ? 'NOTIFIED' : 'PENDING',
+        notificationSent: emailSuccess || webhookSuccess || false,
+        notificationSentAt: (emailSuccess || webhookSuccess) ? new Date() : null,
+        notificationError: notificationResults.email?.error || notificationResults.webhook?.error || null
+      }
+    });
+  }
+
+  return booking;
+}
+
+// ============================================
 // DASHBOARD CHAT ENDPOINT (JWT auth - for testing)
 // ============================================
 
@@ -347,6 +437,17 @@ app.post('/api/chat/stream', protectedRoute, chatLimiter, checkMessageLimit, asy
     for await (const chunk of stream) {
       fullResponse += chunk;
       res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+    }
+
+    // Try to auto-submit booking if user provided info
+    try {
+      const booking = await tryAutoSubmitBooking(chatbot, conversationHistory, message, user.id);
+      if (booking) {
+        console.log(`Auto-submitted booking ${booking.id} for chatbot ${chatbotId}`);
+        res.write(`data: ${JSON.stringify({ bookingSubmitted: true, bookingId: booking.id })}\n\n`);
+      }
+    } catch (bookingError) {
+      console.error('Auto-booking error:', bookingError);
     }
 
     // Increment usage
@@ -518,6 +619,17 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
           { conversationId: conversation.id, role: 'assistant', content: fullResponse }
         ]
       });
+    }
+
+    // Try to auto-submit booking if user provided info
+    try {
+      const booking = await tryAutoSubmitBooking(chatbot, conversationHistory, message, user.id);
+      if (booking) {
+        console.log(`Widget auto-submitted booking ${booking.id} for chatbot ${chatbotId}`);
+        res.write(`data: ${JSON.stringify({ bookingSubmitted: true, bookingId: booking.id })}\n\n`);
+      }
+    } catch (bookingError) {
+      console.error('Widget auto-booking error:', bookingError);
     }
 
     // Increment usage

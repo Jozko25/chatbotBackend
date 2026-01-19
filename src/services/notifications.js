@@ -2,6 +2,9 @@ import { Resend } from 'resend';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+// From address - use verified domain or Resend's test address
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'SiteBot <onboarding@resend.dev>';
+
 /**
  * Format booking data for email
  */
@@ -120,8 +123,10 @@ export async function sendBookingEmail(booking, chatbot) {
   }
 
   try {
+    console.log(`Sending email from ${FROM_EMAIL} to ${chatbot.notificationEmail}`);
+    
     const result = await resend.emails.send({
-      from: 'SiteBot <bookings@sitebot.com>',
+      from: FROM_EMAIL,
       to: chatbot.notificationEmail,
       replyTo: booking.customerEmail || undefined,
       subject: `New Booking Request - ${booking.customerName || 'Customer'} - ${chatbot.name}`,
@@ -129,10 +134,11 @@ export async function sendBookingEmail(booking, chatbot) {
       text: generateBookingEmailText(booking, chatbot)
     });
 
-    console.log('Email sent:', result);
-    return { success: true, id: result.id };
+    console.log('Email sent successfully:', result);
+    return { success: true, id: result.data?.id || result.id };
   } catch (error) {
     console.error('Failed to send email:', error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
     return { success: false, error: error.message };
   }
 }
