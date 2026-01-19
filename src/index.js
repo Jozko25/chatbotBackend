@@ -57,9 +57,128 @@ app.use('/api/api-keys', protectedRoute, apiKeyRoutes);
 app.use('/api/usage', protectedRoute, usageRoutes);
 
 // ============================================
-// SCRAPE ENDPOINT (protected, creates chatbot)
+// SCRAPE ENDPOINT WITH STREAMING (protected, creates chatbot)
 // ============================================
 
+app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit, async (req, res) => {
+  const { url } = req.body;
+  const user = req.user;
+
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    new URL(url);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL format' });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const sendEvent = (type, data) => {
+    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+  };
+
+  console.log(`\n${'='.repeat(50)}`);
+  console.log(`Scraping (streaming): ${url} (user: ${user.email})`);
+  console.log(`${'='.repeat(50)}`);
+
+  try {
+    // Progress callback for streaming updates
+    const onProgress = (progress) => {
+      sendEvent(progress.type, progress);
+    };
+
+    const pages = await scrapeClinicWebsite(url, 10, 25, onProgress);
+
+    if (!pages || pages.length === 0) {
+      sendEvent('error', { error: 'Could not scrape content from this website' });
+      res.end();
+      return;
+    }
+
+    // First pass: regex-based extraction
+    sendEvent('extracting', { step: 'regex', message: 'Extracting data from content...' });
+    const regexData = normalizeClinicData(pages, url);
+
+    // Second pass: LLM-based extraction for better accuracy
+    let clinicData = regexData;
+    if (OPENAI_API_KEY) {
+      sendEvent('extracting', { step: 'llm', message: 'Using AI to improve data extraction...' });
+      const llmData = await extractWithLLM(OPENAI_API_KEY, regexData.raw_content, pages);
+      clinicData = mergeExtractedData(llmData, regexData);
+    }
+
+    const welcomeMessage = generateWelcomeMessage(clinicData);
+
+    sendEvent('saving', { message: 'Saving chatbot to database...' });
+
+    // Save chatbot to database
+    const chatbot = await prisma.chatbot.create({
+      data: {
+        userId: user.id,
+        name: clinicData.clinic_name || new URL(url).hostname,
+        sourceUrl: url,
+        clinicData: {
+          clinic_name: clinicData.clinic_name,
+          address: clinicData.address,
+          opening_hours: clinicData.opening_hours,
+          phone: clinicData.phone,
+          email: clinicData.email,
+          services: clinicData.services,
+          doctors: clinicData.doctors,
+          faq: clinicData.faq,
+          source_pages: clinicData.source_pages,
+          welcomeMessage
+        },
+        rawContent: clinicData.raw_content,
+        theme: {},
+        lastScrapedAt: new Date()
+      }
+    });
+
+    // Track usage
+    await prisma.usageRecord.create({
+      data: {
+        userId: user.id,
+        chatbotId: chatbot.id,
+        eventType: 'SCRAPE',
+        date: new Date()
+      }
+    });
+
+    console.log(`\nResults:`);
+    console.log(`  - Chatbot ID: ${chatbot.id}`);
+    console.log(`  - Clinic: ${clinicData.clinic_name}`);
+    console.log(`  - Pages: ${clinicData.source_pages.length}`);
+    console.log(`  - Services: ${clinicData.services.length}`);
+    console.log(`  - Doctors: ${clinicData.doctors.length}\n`);
+
+    sendEvent('complete', {
+      chatbotId: chatbot.id,
+      name: clinicData.clinic_name,
+      pagesScraped: clinicData.source_pages.length,
+      servicesFound: clinicData.services.length,
+      phone: clinicData.phone,
+      email: clinicData.email
+    });
+
+    res.end();
+
+  } catch (error) {
+    console.error('Scrape error:', error);
+    sendEvent('error', { error: `Scraping failed: ${error.message}` });
+    res.end();
+  }
+});
+
+// Legacy non-streaming endpoint (for backward compatibility)
 app.post('/api/scrape', protectedRoute, scrapeLimiter, checkChatbotLimit, async (req, res) => {
   const { url } = req.body;
   const user = req.user;

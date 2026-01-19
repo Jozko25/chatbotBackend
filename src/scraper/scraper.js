@@ -60,13 +60,27 @@ function normalizeUrl(url, baseUrl) {
 
 function extractCleanText($, selector = 'body') {
   const $el = $(selector).clone();
-  $el.find('script, style, nav, noscript, svg, iframe').remove();
-  $el.find('[class*="cookie"], [class*="popup"], [class*="modal"]').remove();
 
-  return $el.text()
-    .replace(/\s+/g, ' ')
-    .replace(/\n\s*\n/g, '\n')
+  // Remove non-content elements
+  $el.find('script, style, noscript, svg, iframe, header nav, footer nav').remove();
+  $el.find('[class*="cookie"], [class*="popup"], [class*="modal"], [class*="banner"], [aria-hidden="true"]').remove();
+  $el.find('[role="navigation"], [role="banner"]').remove();
+
+  // For Next.js apps, also look in specific containers
+  // Next.js often wraps content in #__next or main
+
+  let text = $el.text();
+
+  // Clean up whitespace but preserve some structure
+  text = text
+    .replace(/\t+/g, ' ')           // tabs to space
+    .replace(/ +/g, ' ')            // multiple spaces to single
+    .replace(/\n +/g, '\n')         // space after newline
+    .replace(/ +\n/g, '\n')         // space before newline
+    .replace(/\n{3,}/g, '\n\n')     // max 2 newlines
     .trim();
+
+  return text;
 }
 
 /**
@@ -115,9 +129,43 @@ function extractPageData($, url) {
   const title = $('title').text().trim();
   const h1 = $('h1').first().text().trim();
 
-  // Get main content
-  const mainContent = extractCleanText($, 'main, article, .content, #content')
-    || extractCleanText($, 'body');
+  // Try multiple content selectors, pick the one with most content
+  // This handles Next.js (#__next), React roots, and traditional layouts
+  const contentSelectors = [
+    '#__next main',           // Next.js with main inside
+    '#__next',                // Next.js root
+    '#root main',             // React with main
+    '#root',                  // React root
+    'main',                   // Standard HTML5
+    'article',                // Article pages
+    '[role="main"]',          // ARIA main
+    '.content',               // Common class
+    '#content',               // Common ID
+    '.page-content',          // Common class
+    '.main-content',          // Common class
+    'body'                    // Fallback
+  ];
+
+  let mainContent = '';
+  for (const selector of contentSelectors) {
+    if ($(selector).length > 0) {
+      const content = extractCleanText($, selector);
+      // Use this content if it's longer than what we have
+      if (content.length > mainContent.length) {
+        mainContent = content;
+      }
+      // If we found good content (>500 chars) in a specific selector, use it
+      if (content.length > 500 && selector !== 'body') {
+        mainContent = content;
+        break;
+      }
+    }
+  }
+
+  // If still no content, try body
+  if (mainContent.length < 100) {
+    mainContent = extractCleanText($, 'body');
+  }
 
   // Extract prices
   const prices = extractPriceTables($);
@@ -159,18 +207,34 @@ async function scrapeSinglePage(context, url, cleanStartUrl, navTimeoutMs, rende
     const startedAt = Date.now();
     const page = await context.newPage();
     try {
+      // Use networkidle for SPAs (Next.js, React, etc.) - waits for network to be idle
       await page.goto(url, {
-        waitUntil: 'domcontentloaded',
+        waitUntil: 'networkidle',
         timeout: attempt === 1 ? navTimeoutMs : navTimeoutMs * 2
       });
       const navMs = Date.now() - startedAt;
+
+      // Wait for content to render - important for Next.js/React
       await page.waitForTimeout(renderWaitMs);
+
+      // Additional wait for any lazy-loaded content or hydration
+      // Wait for body to have meaningful content
+      try {
+        await page.waitForFunction(() => {
+          const body = document.body;
+          const text = body?.innerText || '';
+          // Wait until we have at least 100 characters of content
+          return text.length > 100;
+        }, { timeout: 3000 });
+      } catch {
+        // Continue anyway if this times out
+      }
 
       const html = await page.content();
       const $ = cheerio.load(html);
       const pageData = extractPageData($, url);
       const totalMs = Date.now() - startedAt;
-      console.log(`    ✓ ${url.slice(0, 70)} (${navMs}ms nav, ${totalMs}ms total${attempt === 2 ? ', retry' : ''})`);
+      console.log(`    ✓ ${url.slice(0, 70)} (${navMs}ms nav, ${totalMs}ms total, ${pageData.content.length} chars${attempt === 2 ? ', retry' : ''})`);
 
       // Extract links for next depth
       const links = $('a[href]')
@@ -193,12 +257,28 @@ async function scrapeSinglePage(context, url, cleanStartUrl, navTimeoutMs, rende
   return null;
 }
 
-export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25) {
+/**
+ * Scrape a website with optional progress callback for streaming updates
+ * @param {string} startUrl - URL to start scraping from
+ * @param {number} maxDepth - Maximum link depth to follow
+ * @param {number} maxPages - Maximum pages to scrape
+ * @param {function} onProgress - Optional callback for progress updates
+ */
+export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25, onProgress = null) {
   const cleanStartUrl = normalizeUrl(startUrl, startUrl);
-  const CONCURRENCY = Number(process.env.SCRAPER_CONCURRENCY) || 5; // Scrape N pages at once
-  const NAV_TIMEOUT_MS = Number(process.env.SCRAPER_NAV_TIMEOUT_MS) || 7000;
-  const RENDER_WAIT_MS = Number(process.env.SCRAPER_RENDER_WAIT_MS) || 150;
+  const CONCURRENCY = Number(process.env.SCRAPER_CONCURRENCY) || 3;
+  const NAV_TIMEOUT_MS = Number(process.env.SCRAPER_NAV_TIMEOUT_MS) || 15000;
+  const RENDER_WAIT_MS = Number(process.env.SCRAPER_RENDER_WAIT_MS) || 500;
   const MAX_PAGES = Number(process.env.SCRAPER_MAX_PAGES) || maxPages;
+
+  // Helper to send progress updates
+  const sendProgress = (type, data) => {
+    if (onProgress) {
+      onProgress({ type, ...data, timestamp: Date.now() });
+    }
+  };
+
+  sendProgress('start', { url: cleanStartUrl, maxPages: MAX_PAGES });
 
   const browser = await chromium.launch({
     headless: true,
@@ -214,8 +294,8 @@ export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25
   await context.route('**/*', route => {
     const request = route.request();
     const type = request.resourceType();
-    if (['image', 'media', 'font', 'stylesheet'].includes(type)) return route.abort();
-    if (/google-analytics\.com|doubleclick\.net|facebook\.com|hotjar\.com/i.test(request.url())) {
+    if (['image', 'media', 'font'].includes(type)) return route.abort();
+    if (/google-analytics\.com|googletagmanager\.com|doubleclick\.net|facebook\.com|hotjar\.com|intercom\.io/i.test(request.url())) {
       return route.abort();
     }
     return route.continue();
@@ -224,6 +304,7 @@ export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25
   const visited = new Set();
   const scrapedPages = [];
   let currentDepthUrls = [cleanStartUrl];
+  let totalLinksFound = 0;
 
   console.log(`Starting scrape: ${cleanStartUrl}`);
 
@@ -241,22 +322,42 @@ export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25
       if (urlsToScrape.length === 0) break;
 
       console.log(`  [depth ${depth}] Scraping ${urlsToScrape.length} pages...`);
+      sendProgress('depth', { depth, pagesToScrape: urlsToScrape.length, totalScraped: scrapedPages.length });
 
       const nextDepthLinks = [];
 
       // Process in batches of CONCURRENCY
       for (let i = 0; i < urlsToScrape.length; i += CONCURRENCY) {
         const batch = urlsToScrape.slice(i, i + CONCURRENCY);
+
+        // Send progress for pages being scraped
+        batch.forEach(url => {
+          sendProgress('scraping', { url, pagesScraped: scrapedPages.length, maxPages: MAX_PAGES });
+        });
+
         const results = await Promise.all(
           batch.map(url => scrapeSinglePage(context, url, cleanStartUrl, NAV_TIMEOUT_MS, RENDER_WAIT_MS))
         );
 
-        results.forEach(result => {
+        results.forEach((result, idx) => {
           if (result) {
             scrapedPages.push(result.pageData);
+            totalLinksFound += result.links.length;
             if (depth < maxDepth) {
               nextDepthLinks.push(...result.links);
             }
+            // Send progress for completed page
+            sendProgress('page_done', {
+              url: batch[idx],
+              title: result.pageData.title || result.pageData.h1,
+              contentLength: result.pageData.content.length,
+              linksFound: result.links.length,
+              pagesScraped: scrapedPages.length,
+              maxPages: MAX_PAGES,
+              totalLinksFound
+            });
+          } else {
+            sendProgress('page_error', { url: batch[idx], pagesScraped: scrapedPages.length });
           }
         });
       }
@@ -274,6 +375,10 @@ export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25
   }
 
   console.log(`Scraping complete: ${scrapedPages.length} pages`);
+  sendProgress('scrape_complete', {
+    pagesScraped: scrapedPages.length,
+    totalLinksFound
+  });
 
   return scrapedPages;
 }
