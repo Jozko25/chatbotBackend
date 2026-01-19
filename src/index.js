@@ -503,7 +503,10 @@ app.get('/api/widget/chatbot/:id', validateApiKey, widgetLimiter, async (req, re
       id: true,
       name: true,
       clinicData: true,
-      theme: true
+      theme: true,
+      bookingEnabled: true,
+      bookingFields: true,
+      welcomeMessage: true
     }
   });
 
@@ -521,11 +524,19 @@ app.get('/api/widget/chatbot/:id', validateApiKey, widgetLimiter, async (req, re
     }
   }).catch(err => console.error('Failed to track widget load:', err));
 
+  // Add welcome message to clinicData for widget
+  const clinicDataWithWelcome = {
+    ...chatbot.clinicData,
+    welcomeMessage: chatbot.welcomeMessage
+  };
+
   res.json({
     id: chatbot.id,
     name: chatbot.name,
-    clinicData: chatbot.clinicData,
-    theme: chatbot.theme
+    clinicData: clinicDataWithWelcome,
+    theme: chatbot.theme,
+    bookingEnabled: chatbot.bookingEnabled,
+    bookingFields: chatbot.bookingFields
   });
 });
 
