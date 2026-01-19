@@ -18,35 +18,12 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
-// CORS configuration
-const allowedOrigins = (process.env.FRONTEND_URL || '*').split(',').map(o => o.trim());
-
-// Widget endpoints allow all origins (domain validation is done via API key)
-const widgetCors = cors({
+// CORS configuration - allow all origins, domain validation done via API key for widgets
+app.use(cors({
   origin: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: false
-});
-
-// Dashboard endpoints restrict to allowed origins
-const dashboardCors = cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    callback(new Error('Not allowed by CORS'));
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
-});
-
-// Apply widget CORS to widget routes
-app.use('/api/widget', widgetCors);
-
-// Apply dashboard CORS to everything else
-app.use(dashboardCors);
+}));
 
 app.use(express.json({ limit: '10mb' }));
 
