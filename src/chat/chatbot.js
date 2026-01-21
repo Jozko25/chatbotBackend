@@ -346,9 +346,7 @@ Return ONLY JSON with the following fields (use null for fields not provided):
  * @param {string} userMessage - Current user message
  * @param {object} options - Optional settings (systemPrompt, customKnowledge, communicationStyle, language)
  */
-export async function generateChatResponse(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
-  const client = new OpenAI({ apiKey });
-
+export async function prepareChatMessages(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const basePrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const systemPrompt = buildSystemPrompt(basePrompt, options);
   const customKnowledge = options.customKnowledge || null;
@@ -362,6 +360,22 @@ export async function generateChatResponse(apiKey, clinicData, conversationHisto
     ...conversationHistory.slice(-16),
     { role: 'user', content: userMessage }
   ];
+
+  return { messages, intents, systemPrompt, context };
+}
+
+export async function generateChatResponse(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
+  const client = new OpenAI({ apiKey });
+
+  const prepared = options.prepared || await prepareChatMessages(
+    apiKey,
+    clinicData,
+    conversationHistory,
+    userMessage,
+    options
+  );
+
+  const { messages, intents } = prepared;
 
   try {
     const response = await client.chat.completions.create({
@@ -402,19 +416,15 @@ export async function generateChatResponse(apiKey, clinicData, conversationHisto
 export async function* generateChatResponseStream(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const client = new OpenAI({ apiKey });
 
-  const basePrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const systemPrompt = buildSystemPrompt(basePrompt, options);
-  const customKnowledge = options.customKnowledge || null;
+  const prepared = options.prepared || await prepareChatMessages(
+    apiKey,
+    clinicData,
+    conversationHistory,
+    userMessage,
+    options
+  );
 
-  const intents = await detectIntent(apiKey, userMessage, conversationHistory);
-  const context = buildContext(clinicData, userMessage, intents, customKnowledge);
-
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'system', content: `CONTEXT FROM BUSINESS WEBSITE:\n\n${context}` },
-    ...conversationHistory.slice(-16),
-    { role: 'user', content: userMessage }
-  ];
+  const { messages, intents, systemPrompt, context } = prepared;
 
   // Debug: log what we're sending to the LLM
   console.log('\n========== LLM REQUEST ==========');
