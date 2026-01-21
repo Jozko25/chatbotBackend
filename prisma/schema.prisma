@@ -78,6 +78,10 @@ model Chatbot {
   bookingFields       String[]  @default(["name", "email", "phone", "service", "preferredDate", "notes"]) @map("booking_fields")
   bookingPromptMessage String?  @map("booking_prompt_message") @db.Text
 
+  // Page display restrictions
+  pageDisplayMode     PageDisplayMode @default(ALL) @map("page_display_mode")
+  allowedPages        String[]  @default([]) @map("allowed_pages")  // URL patterns for INCLUDE/EXCLUDE modes
+
   // Theme/customization
   theme           Json      @default("{}")
 
@@ -106,6 +110,12 @@ enum CommunicationStyle {
   FRIENDLY      // Warm, conversational
   CASUAL        // Relaxed, informal
   CONCISE       // Brief, to-the-point
+}
+
+enum PageDisplayMode {
+  ALL           // Show on all pages
+  INCLUDE       // Only show on pages matching allowedPages
+  EXCLUDE       // Show on all pages except those matching allowedPages
 }
 
 enum ChatbotStatus {

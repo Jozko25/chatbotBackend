@@ -506,7 +506,9 @@ app.get('/api/widget/chatbot/:id', validateApiKey, widgetLimiter, async (req, re
       theme: true,
       bookingEnabled: true,
       bookingFields: true,
-      welcomeMessage: true
+      welcomeMessage: true,
+      pageDisplayMode: true,
+      allowedPages: true
     }
   });
 
@@ -536,7 +538,9 @@ app.get('/api/widget/chatbot/:id', validateApiKey, widgetLimiter, async (req, re
     clinicData: clinicDataWithWelcome,
     theme: chatbot.theme,
     bookingEnabled: chatbot.bookingEnabled,
-    bookingFields: chatbot.bookingFields
+    bookingFields: chatbot.bookingFields,
+    pageDisplayMode: chatbot.pageDisplayMode,
+    allowedPages: chatbot.allowedPages
   });
 });
 

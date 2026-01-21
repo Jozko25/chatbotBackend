@@ -185,7 +185,9 @@ router.put('/:id/notifications', async (req, res) => {
     bookingPromptMessage,
     communicationStyle,
     language,
-    customGreeting
+    customGreeting,
+    pageDisplayMode,
+    allowedPages
   } = req.body;
 
   try {
@@ -241,6 +243,22 @@ router.put('/:id/notifications', async (req, res) => {
     }
     if (customGreeting !== undefined) {
       updateData.customGreeting = customGreeting || null;
+    }
+
+    // Page display restriction settings
+    if (pageDisplayMode !== undefined) {
+      const validModes = ['ALL', 'INCLUDE', 'EXCLUDE'];
+      if (!validModes.includes(pageDisplayMode)) {
+        return res.status(400).json({ error: `Invalid page display mode. Must be one of: ${validModes.join(', ')}` });
+      }
+      updateData.pageDisplayMode = pageDisplayMode;
+    }
+    if (allowedPages !== undefined && Array.isArray(allowedPages)) {
+      // Validate and clean up the patterns
+      const cleanedPatterns = allowedPages
+        .filter(p => typeof p === 'string' && p.trim().length > 0)
+        .map(p => p.trim());
+      updateData.allowedPages = cleanedPatterns;
     }
 
     if (Object.keys(updateData).length === 0) {
