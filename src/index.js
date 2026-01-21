@@ -140,6 +140,9 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
+  // Disable request/response timeouts for long-running SSE streams.
+  req.setTimeout(0);
+  res.setTimeout(0);
   res.flushHeaders();
 
   const sendEvent = (type, data) => {
@@ -156,7 +159,7 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
       sendEvent(progress.type, progress);
     };
 
-    const pages = await scrapeClinicWebsite(url, 10, 25, onProgress);
+    const pages = await scrapeClinicWebsite(url, 10, 50, onProgress);
 
     if (!pages || pages.length === 0) {
       sendEvent('error', { error: 'Could not scrape content from this website' });
@@ -265,7 +268,7 @@ app.post('/api/scrape', protectedRoute, scrapeLimiter, checkChatbotLimit, async 
   console.log(`${'='.repeat(50)}`);
 
   try {
-    const pages = await scrapeClinicWebsite(url, 10, 25);
+    const pages = await scrapeClinicWebsite(url, 10, 50);
 
     if (!pages || pages.length === 0) {
       return res.status(400).json({

@@ -58,6 +58,80 @@ function normalizeUrl(url, baseUrl) {
   }
 }
 
+async function fetchText(url, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (XeloChatBot/1.0)'
+      }
+    });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function parseSitemapXml(xml) {
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const urls = $('url > loc')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(Boolean);
+  const sitemaps = $('sitemap > loc')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(Boolean);
+  return { urls, sitemaps };
+}
+
+async function discoverSitemapUrls(startUrl) {
+  const base = new URL(startUrl);
+  const sitemapCandidates = new Set();
+
+  const robotsUrl = new URL('/robots.txt', base).href;
+  const robotsTxt = await fetchText(robotsUrl);
+  if (robotsTxt) {
+    robotsTxt.split('\n').forEach(line => {
+      const match = line.match(/^\s*Sitemap:\s*(.+)\s*$/i);
+      if (match && match[1]) sitemapCandidates.add(match[1].trim());
+    });
+  }
+
+  if (sitemapCandidates.size === 0) {
+    sitemapCandidates.add(new URL('/sitemap.xml', base).href);
+    sitemapCandidates.add(new URL('/sitemap_index.xml', base).href);
+  }
+
+  const discovered = new Set();
+  const toFetch = [...sitemapCandidates];
+
+  while (toFetch.length > 0 && discovered.size < 500) {
+    const sitemapUrl = toFetch.shift();
+    const xml = await fetchText(sitemapUrl);
+    if (!xml) continue;
+
+    const { urls, sitemaps } = parseSitemapXml(xml);
+
+    urls.forEach(loc => discovered.add(loc));
+    sitemaps.forEach(loc => {
+      if (!sitemapCandidates.has(loc)) {
+        sitemapCandidates.add(loc);
+        toFetch.push(loc);
+      }
+    });
+  }
+
+  return [...discovered]
+    .map(url => normalizeUrl(url, startUrl))
+    .filter(url => url && isSameDomain(startUrl, url) && !shouldIgnoreUrl(url));
+}
+
 function extractCleanText($, selector = 'body') {
   const $el = $(selector).clone();
 
@@ -191,7 +265,7 @@ function extractPageData($, url) {
     url,
     title,
     h1,
-    content: mainContent.slice(0, 15000),
+    content: mainContent.slice(0, 30000),
     prices,
     phones,
     emails,
@@ -303,7 +377,11 @@ export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25
 
   const visited = new Set();
   const scrapedPages = [];
-  let currentDepthUrls = [cleanStartUrl];
+  const sitemapUrls = await discoverSitemapUrls(cleanStartUrl);
+  if (sitemapUrls.length > 0) {
+    console.log(`Sitemap discovered ${sitemapUrls.length} urls`);
+  }
+  let currentDepthUrls = [cleanStartUrl, ...sitemapUrls];
   let totalLinksFound = 0;
 
   console.log(`Starting scrape: ${cleanStartUrl}`);

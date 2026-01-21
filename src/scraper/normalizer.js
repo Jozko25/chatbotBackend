@@ -267,12 +267,12 @@ function buildRawContent(pages) {
         content += '\nPRICES:\n' + p.prices.map(pr => `- ${pr.text}`).join('\n');
       }
 
-      content += '\n\nCONTENT:\n' + p.content.slice(0, 5000);
+      content += '\n\nCONTENT:\n' + p.content.slice(0, 10000);
 
       return content;
     })
     .join('\n\n---\n\n')
-    .slice(0, 80000);
+    .slice(0, 160000);
 }
 
 /**

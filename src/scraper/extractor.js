@@ -54,13 +54,13 @@ export async function extractWithLLM(apiKey, rawContent, pageData) {
 
   const contentChunks = [];
   let totalChars = 0;
-  const maxTotalChars = 30000;
+  const maxTotalChars = 60000;
 
   for (const page of sortedPages) {
     if (totalChars >= maxTotalChars) break;
 
     const remainingChars = maxTotalChars - totalChars;
-    const pageContent = page.content?.slice(0, Math.min(remainingChars, 5000)) || '';
+    const pageContent = page.content?.slice(0, Math.min(remainingChars, 8000)) || '';
 
     if (pageContent.length > 50) { // Skip nearly empty pages
       contentChunks.push(`=== PAGE: ${page.title || page.url} ===\nURL: ${page.url}\n${pageContent}`);
