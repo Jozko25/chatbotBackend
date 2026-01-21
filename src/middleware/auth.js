@@ -17,10 +17,10 @@ export async function attachUser(req, res, next) {
   const auth0Sub = req.auth.payload.sub;
   // Auth0 includes email in different claim depending on connection type
   const email = req.auth.payload.email ||
-                req.auth.payload['https://sitebot.com/email'] ||
+                req.auth.payload['https://xelochat.com/email'] ||
                 `${auth0Sub}@auth0.local`;
   const name = req.auth.payload.name ||
-               req.auth.payload['https://sitebot.com/name'] ||
+               req.auth.payload['https://xelochat.com/name'] ||
                null;
   const avatarUrl = req.auth.payload.picture || null;
 
@@ -88,17 +88,22 @@ export async function checkChatbotLimit(req, res, next) {
   const user = req.user;
   const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.FREE;
 
+  // Count only ACTIVE and PAUSED chatbots (not DELETED)
   const chatbotCount = await prisma.chatbot.count({
     where: {
       userId: user.id,
-      status: { not: 'DELETED' }
+      status: { in: ['ACTIVE', 'PAUSED'] }
     }
   });
 
+  console.log(`[Chatbot Limit Check] User: ${user.email}, Plan: ${user.plan}, Active: ${chatbotCount}, Limit: ${limits.chatbots}`);
+
   if (chatbotCount >= limits.chatbots) {
     return res.status(403).json({
-      error: `Chatbot limit reached (${limits.chatbots}) for ${user.plan} plan. Please upgrade.`,
-      code: 'CHATBOT_LIMIT_REACHED'
+      error: `Chatbot limit reached (${chatbotCount}/${limits.chatbots}) for ${user.plan} plan. Please upgrade or delete existing chatbots.`,
+      code: 'CHATBOT_LIMIT_REACHED',
+      currentCount: chatbotCount,
+      limit: limits.chatbots
     });
   }
 

@@ -317,6 +317,8 @@ router.put('/:id/status', async (req, res) => {
 // Delete chatbot (soft delete)
 router.delete('/:id', async (req, res) => {
   try {
+    console.log(`[Delete Chatbot] User: ${req.user.email}, Chatbot ID: ${req.params.id}`);
+    
     const result = await prisma.chatbot.updateMany({
       where: {
         id: req.params.id,
@@ -327,8 +329,11 @@ router.delete('/:id', async (req, res) => {
     });
 
     if (result.count === 0) {
+      console.log(`[Delete Chatbot] Not found or already deleted: ${req.params.id}`);
       return res.status(404).json({ error: 'Chatbot not found' });
     }
+    
+    console.log(`[Delete Chatbot] Successfully deleted: ${req.params.id}`);
 
     // Also deactivate all API keys for this chatbot
     await prisma.apiKey.updateMany({

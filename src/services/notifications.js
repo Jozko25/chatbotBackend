@@ -3,7 +3,7 @@ import { Resend } from 'resend';
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // From address - use verified domain or Resend's test address
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'SiteBot <onboarding@resend.dev>';
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'XeloChat <onboarding@resend.dev>';
 
 /**
  * Format booking data for email
@@ -78,7 +78,7 @@ function generateBookingEmailHtml(booking, chatbot) {
       <!-- Footer -->
       <div style="padding: 16px 24px; background: #f9fafb; border-top: 1px solid #eee; text-align: center;">
         <p style="margin: 0; color: #6b7280; font-size: 12px;">
-          Powered by SiteBot
+          Powered by XeloChat
         </p>
       </div>
     </div>
@@ -102,7 +102,7 @@ ${data}
 Submitted: ${new Date(booking.createdAt).toLocaleString('sk-SK', { dateStyle: 'full', timeStyle: 'short' })}
 
 ---
-Powered by SiteBot
+Powered by XeloChat
   `.trim();
 }
 
@@ -180,7 +180,7 @@ export async function sendBookingWebhook(booking, chatbot) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'SiteBot/1.0'
+        'User-Agent': 'XeloChat/1.0'
       },
       body: JSON.stringify(payload)
     });

@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { scrapeClinicWebsite } from './scraper/scraper.js';
 import { normalizeClinicData } from './scraper/normalizer.js';
 import { extractWithLLM, mergeExtractedData } from './scraper/extractor.js';
@@ -7,7 +8,8 @@ import { generateChatResponse, generateWelcomeMessage, generateChatResponseStrea
 import prisma from './services/prisma.js';
 import { protectedRoute, checkChatbotLimit, checkMessageLimit } from './middleware/auth.js';
 import { validateApiKey } from './middleware/apiKey.js';
-import { apiLimiter, scrapeLimiter, chatLimiter, widgetLimiter } from './middleware/rateLimiter.js';
+import { apiLimiter, scrapeLimiter, chatLimiter, widgetLimiter, strictLimiter } from './middleware/rateLimiter.js';
+import { validateChatbotId, sanitizeBookingData } from './middleware/validation.js';
 import chatbotRoutes from './routes/chatbots.js';
 import apiKeyRoutes from './routes/apiKeys.js';
 import usageRoutes from './routes/usage.js';
@@ -21,14 +23,40 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
+// Security headers with Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false, // Allow embedding
+  crossOriginResourcePolicy: { policy: "cross-origin" } // Allow widget embedding
+}));
+
 // CORS configuration - allow all origins, domain validation done via API key for widgets
 app.use(cors({
   origin: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  credentials: true,
+  maxAge: 86400 // 24 hours
 }));
 
-app.use(express.json({ limit: '10mb' }));
+// Request size limits (reduced from 10mb for security)
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+
+// Request timeout (30 seconds)
+app.use((req, res, next) => {
+  req.setTimeout(30000);
+  res.setTimeout(30000);
+  next();
+});
 
 // Apply general rate limit
 app.use(apiLimiter);
@@ -39,7 +67,7 @@ app.use(apiLimiter);
 
 // Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'sitebot-api' });
+  res.json({ status: 'ok', service: 'xelochat-api' });
 });
 
 app.get('/health', (req, res) => {
@@ -59,6 +87,35 @@ app.use('/api/chatbots', protectedRoute, chatbotRoutes);
 app.use('/api/api-keys', protectedRoute, apiKeyRoutes);
 app.use('/api/usage', protectedRoute, usageRoutes);
 app.use('/api/bookings', protectedRoute, bookingRoutes);
+
+// Check user limits endpoint (call before scraping to verify)
+app.get('/api/limits', protectedRoute, async (req, res) => {
+  const user = req.user;
+  const { PLAN_LIMITS } = await import('./middleware/auth.js');
+  const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.FREE;
+
+  const chatbotCount = await prisma.chatbot.count({
+    where: {
+      userId: user.id,
+      status: { in: ['ACTIVE', 'PAUSED'] }
+    }
+  });
+
+  res.json({
+    plan: user.plan,
+    chatbots: {
+      current: chatbotCount,
+      limit: limits.chatbots,
+      canCreate: chatbotCount < limits.chatbots
+    },
+    messages: {
+      used: user.messagesUsed,
+      limit: limits.messages,
+      remaining: Math.max(0, limits.messages - user.messagesUsed),
+      resetsAt: user.limitResetAt
+    }
+  });
+});
 
 // ============================================
 // SCRAPE ENDPOINT WITH STREAMING (protected, creates chatbot)
@@ -696,13 +753,16 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
   }
 });
 
-// Widget booking submission endpoint (API key auth)
-app.post('/api/widget/booking', validateApiKey, widgetLimiter, async (req, res) => {
+// Widget booking submission endpoint (API key auth) - with strict rate limiting
+app.post('/api/widget/booking', validateApiKey, strictLimiter, async (req, res) => {
   const { chatbotId, conversationHistory, bookingData, sessionId } = req.body;
   const user = req.user;
   const apiKeyData = req.apiKeyData;
 
-  if (!chatbotId) return res.status(400).json({ error: 'Chatbot ID required' });
+  // Validate chatbot ID format
+  if (!chatbotId || !validateChatbotId(chatbotId)) {
+    return res.status(400).json({ error: 'Invalid chatbot ID format', code: 'INVALID_CHATBOT_ID' });
+  }
 
   // Check if API key is scoped to this chatbot
   if (apiKeyData.chatbotId && apiKeyData.chatbotId !== chatbotId) {
@@ -744,6 +804,9 @@ app.post('/api/widget/booking', validateApiKey, widgetLimiter, async (req, res) 
         ...bookingData
       };
     }
+
+    // Sanitize all booking data
+    finalBookingData = sanitizeBookingData(finalBookingData);
 
     // Validate we have minimum required data
     if (!finalBookingData.customerName && !finalBookingData.customerPhone && !finalBookingData.customerEmail) {
@@ -867,7 +930,7 @@ app.post('/api/chat', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════╗
-║     SITEBOT API                              ║
+║     XELOCHAT API                             ║
 ║     Running on port ${PORT}                      ║
 ║     Auth: Auth0 JWT + API Keys               ║
 ╚══════════════════════════════════════════════╝
