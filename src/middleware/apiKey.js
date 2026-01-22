@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import prisma from '../services/prisma.js';
-import { PLAN_LIMITS } from './auth.js';
+import { PLAN_LIMITS } from '../config/billing.js';
+import { resetMonthlyUsageIfNeeded } from './auth.js';
 
 // Extract domain from origin/referer
 function extractDomain(url) {
@@ -80,9 +81,11 @@ export async function validateApiKey(req, res, next) {
       });
     }
 
+    const user = await resetMonthlyUsageIfNeeded(key.user);
+
     // Check user message limits
-    const limits = PLAN_LIMITS[key.user.plan] || PLAN_LIMITS.FREE;
-    if (key.user.messagesUsed >= limits.messages) {
+    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.FREE;
+    if (user.messagesUsed >= limits.messages) {
       return res.status(429).json({
         error: 'Message limit exceeded. Please upgrade your plan.',
         code: 'MESSAGE_LIMIT_EXCEEDED'
@@ -97,7 +100,7 @@ export async function validateApiKey(req, res, next) {
 
     // Attach to request
     req.apiKeyData = key;
-    req.user = key.user;
+    req.user = user;
     next();
   } catch (error) {
     console.error('API key validation error:', error);

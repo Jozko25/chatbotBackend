@@ -14,6 +14,9 @@ import chatbotRoutes from './routes/chatbots.js';
 import apiKeyRoutes from './routes/apiKeys.js';
 import usageRoutes from './routes/usage.js';
 import bookingRoutes from './routes/bookings.js';
+import billingRoutes from './routes/billing.js';
+import stripeWebhookRoutes from './routes/stripeWebhook.js';
+import accountRoutes from './routes/account.js';
 import { sendBookingNotifications } from './services/notifications.js';
 import { extractBookingData } from './chat/chatbot.js';
 import { CHAT_MODEL, UTILITY_MODEL } from './config/ai.js';
@@ -49,6 +52,9 @@ app.use(cors({
   credentials: true,
   maxAge: 86400 // 24 hours
 }));
+
+// Stripe webhooks require the raw body for signature verification
+app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookRoutes);
 
 // Request size limits (reduced from 10mb for security)
 app.use(express.json({ limit: '5mb' }));
@@ -327,11 +333,13 @@ app.use('/api/chatbots', protectedRoute, chatbotRoutes);
 app.use('/api/api-keys', protectedRoute, apiKeyRoutes);
 app.use('/api/usage', protectedRoute, usageRoutes);
 app.use('/api/bookings', protectedRoute, bookingRoutes);
+app.use('/api/billing', protectedRoute, billingRoutes);
+app.use('/api/account', protectedRoute, accountRoutes);
 
 // Check user limits endpoint (call before scraping to verify)
 app.get('/api/limits', protectedRoute, async (req, res) => {
   const user = req.user;
-  const { PLAN_LIMITS } = await import('./middleware/auth.js');
+  const { PLAN_LIMITS } = await import('./config/billing.js');
   const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.FREE;
 
   const chatbotCount = await prisma.chatbot.count({

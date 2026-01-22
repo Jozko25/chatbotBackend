@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import prisma from '../services/prisma.js';
-import { PLAN_LIMITS } from '../middleware/auth.js';
+import { PLAN_LIMITS } from '../config/billing.js';
 
 const router = Router();
 

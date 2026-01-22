@@ -1,5 +1,6 @@
 import { auth } from 'express-oauth2-jwt-bearer';
 import prisma from '../services/prisma.js';
+import { PLAN_LIMITS } from '../config/billing.js';
 
 // Auth0 JWT validation middleware
 export const requireAuth = auth({
@@ -40,23 +41,14 @@ export async function attachUser(req, res, next) {
         name,
         avatarUrl,
         plan: 'FREE',
-        messageLimit: 100,
+        messageLimit: PLAN_LIMITS.FREE.messages,
         messagesUsed: 0,
         limitResetAt: getNextMonthStart()
       }
     });
 
     // Check if we need to reset monthly usage
-    const now = new Date();
-    if (user.limitResetAt <= now) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          messagesUsed: 0,
-          limitResetAt: getNextMonthStart()
-        }
-      });
-    }
+    user = await resetMonthlyUsageIfNeeded(user);
 
     req.user = user;
     next();
@@ -72,16 +64,22 @@ function getNextMonthStart() {
   return new Date(now.getFullYear(), now.getMonth() + 1, 1);
 }
 
+export async function resetMonthlyUsageIfNeeded(user) {
+  const now = new Date();
+  if (user.limitResetAt && user.limitResetAt <= now) {
+    return prisma.user.update({
+      where: { id: user.id },
+      data: {
+        messagesUsed: 0,
+        limitResetAt: getNextMonthStart()
+      }
+    });
+  }
+  return user;
+}
+
 // Combined middleware for protected routes
 export const protectedRoute = [requireAuth, attachUser];
-
-// Plan limits configuration
-export const PLAN_LIMITS = {
-  FREE: { chatbots: 1, messages: 100 },
-  STARTER: { chatbots: 3, messages: 1000 },
-  PRO: { chatbots: 10, messages: 10000 },
-  ENTERPRISE: { chatbots: 999, messages: 999999 }
-};
 
 // Middleware to check chatbot limit
 export async function checkChatbotLimit(req, res, next) {

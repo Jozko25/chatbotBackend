@@ -16,10 +16,11 @@ model User {
   email         String    @unique
   name          String?
   avatarUrl     String?   @map("avatar_url")
+  stripeCustomerId String? @unique @map("stripe_customer_id")
 
   // Subscription & limits
   plan          Plan      @default(FREE)
-  messageLimit  Int       @default(100) @map("message_limit")
+  messageLimit  Int       @default(50) @map("message_limit")
   messagesUsed  Int       @default(0) @map("messages_used")
   limitResetAt  DateTime  @default(now()) @map("limit_reset_at")
 
@@ -32,6 +33,7 @@ model User {
   chatbots      Chatbot[]
   apiKeys       ApiKey[]
   usageRecords  UsageRecord[]
+  subscription  Subscription?
 
   @@map("users")
 }
@@ -41,6 +43,45 @@ enum Plan {
   STARTER
   PRO
   ENTERPRISE
+}
+
+// ============================================
+// SUBSCRIPTIONS & BILLING
+// ============================================
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  userId               String   @unique @map("user_id")
+  stripeCustomerId     String   @map("stripe_customer_id")
+  stripeSubscriptionId String   @unique @map("stripe_subscription_id")
+  status               String
+  priceId              String   @map("price_id")
+  currentPeriodEnd     DateTime? @map("current_period_end")
+  cancelAtPeriodEnd    Boolean  @default(false) @map("cancel_at_period_end")
+
+  // Timestamps
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([stripeCustomerId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+model StripeEvent {
+  id            String   @id @default(cuid())
+  stripeEventId String   @unique @map("stripe_event_id")
+  type          String
+  objectId      String?  @map("object_id")
+  livemode      Boolean  @default(false)
+  processedAt   DateTime? @map("processed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([type])
+  @@map("stripe_events")
 }
 
 // ============================================
