@@ -7,7 +7,21 @@ import { getPriceIdForPlan, SUPPORTED_CURRENCIES } from '../config/billing.js';
 const router = Router();
 
 function getFrontendUrl() {
-  return process.env.FRONTEND_URL || 'http://localhost:3000';
+  const raw = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const candidates = raw.split(',').map((value) => value.trim()).filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.toString().replace(/\/$/, '');
+      }
+    } catch {
+      // Ignore invalid URLs and continue.
+    }
+  }
+
+  return 'http://localhost:3000';
 }
 
 function normalizePlan(plan) {

@@ -45,13 +45,45 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" } // Allow widget embedding
 }));
 
-// CORS configuration - allow all origins, domain validation done via API key for widgets
-app.use(cors({
-  origin: true,
+// CORS configuration - strict for dashboard, open for widget endpoints.
+const rawAllowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.CORS_ALLOWED_ORIGINS
+].filter(Boolean).join(',');
+const allowedOrigins = rawAllowedOrigins
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+const strictCors = cors({
+  origin(origin, callback) {
+    if (!origin) {
+      return callback(null, true);
+    }
+    const normalizedOrigin = origin.replace(/\/+$/, '');
+    if (allowedOrigins.includes(normalizedOrigin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   credentials: true,
   maxAge: 86400 // 24 hours
-}));
+});
+
+const widgetCors = cors({
+  origin: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  credentials: true,
+  maxAge: 86400
+});
+
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/widget')) {
+    return widgetCors(req, res, next);
+  }
+  return strictCors(req, res, next);
+});
 
 // Stripe webhooks require the raw body for signature verification
 app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookRoutes);
