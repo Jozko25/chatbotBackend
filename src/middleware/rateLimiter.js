@@ -67,3 +67,23 @@ export const strictLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
+
+// Demo scrape limiter (per IP, daily)
+export const demoScrapeLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 2, // 2 demo scrapes per day per IP
+  keyGenerator: ipKeyGenerator,
+  message: { error: 'Demo limit reached. Please try again tomorrow.', code: 'DEMO_SCRAPE_LIMIT_EXCEEDED' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Demo chat limiter (per IP, daily)
+export const demoChatLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 100, // 100 demo messages per day per IP
+  keyGenerator: ipKeyGenerator,
+  message: { error: 'Demo chat limit reached. Please try again tomorrow.', code: 'DEMO_CHAT_LIMIT_EXCEEDED' },
+  standardHeaders: true,
+  legacyHeaders: false
+});

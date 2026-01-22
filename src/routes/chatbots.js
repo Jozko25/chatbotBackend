@@ -1,7 +1,62 @@
 import { Router } from 'express';
 import prisma from '../services/prisma.js';
+import { checkChatbotLimit } from '../middleware/auth.js';
+import { generateWelcomeMessage } from '../chat/chatbot.js';
 
 const router = Router();
+
+// Import demo chatbot into user account
+router.post('/import', checkChatbotLimit, async (req, res) => {
+  const { clinicData, theme, sourceUrl } = req.body;
+
+  if (!clinicData || typeof clinicData !== 'object') {
+    return res.status(400).json({ error: 'clinicData is required' });
+  }
+
+  const resolvedSourceUrl =
+    sourceUrl ||
+    clinicData.sourceUrl ||
+    clinicData.source_url ||
+    (Array.isArray(clinicData.source_pages) ? clinicData.source_pages[0] : null);
+
+  if (!resolvedSourceUrl) {
+    return res.status(400).json({ error: 'sourceUrl is required' });
+  }
+
+  try {
+    new URL(resolvedSourceUrl);
+  } catch {
+    return res.status(400).json({ error: 'Invalid sourceUrl format' });
+  }
+
+  const { raw_content, sourceUrl: _sourceUrl, source_url, ...rest } = clinicData;
+  const welcomeMessage = rest.welcomeMessage || generateWelcomeMessage(rest);
+
+  const cleanedClinicData = {
+    ...rest,
+    source_pages: Array.isArray(rest.source_pages) ? rest.source_pages : [],
+    welcomeMessage,
+  };
+
+  try {
+    const chatbot = await prisma.chatbot.create({
+      data: {
+        userId: req.user.id,
+        name: cleanedClinicData.clinic_name || new URL(resolvedSourceUrl).hostname,
+        sourceUrl: resolvedSourceUrl,
+        clinicData: cleanedClinicData,
+        rawContent: raw_content || null,
+        theme: theme || {},
+        lastScrapedAt: new Date()
+      }
+    });
+
+    res.json({ chatbotId: chatbot.id });
+  } catch (error) {
+    console.error('Error importing chatbot:', error);
+    res.status(500).json({ error: 'Failed to import chatbot' });
+  }
+});
 
 // List user's chatbots
 router.get('/', async (req, res) => {

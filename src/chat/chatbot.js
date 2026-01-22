@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { CHAT_MODEL, UTILITY_MODEL } from '../config/ai.js';
 
 // Communication style prompts
 const STYLE_PROMPTS = {
@@ -20,7 +21,7 @@ STRICT RULES YOU MUST FOLLOW:
 
 4. NEVER discuss topics unrelated to this business.
 
-5. Be polite and professional. Use a friendly, helpful tone.
+5. Be polite and professional. Use a friendly, helpful tone and natural, human-sounding language.
 
 6. Keep answers concise but complete. If asked about prices or products, list relevant ones from the context.
 
@@ -268,7 +269,8 @@ export async function detectIntent(apiKey, query, conversationHistory = []) {
   "hours": boolean,      // asking about opening hours/schedule
   "doctors": boolean,    // asking about staff, doctors, team
   "booking": boolean,    // wants to book/schedule/make an appointment/reservation
-  "providingInfo": boolean // user is providing personal info (name, phone, email, date preference)
+  "providingInfo": boolean, // user is providing personal info (name, phone, email, date preference)
+  "language": string        // ISO 639-1 when possible (e.g., sk, cs, en, de, hu, pl) or "unknown"
 }`;
 
   try {
@@ -277,7 +279,7 @@ export async function detectIntent(apiKey, query, conversationHistory = []) {
     const fullQuery = contextMessages ? `Previous context:\n${contextMessages}\n\nCurrent message: ${query}` : query;
 
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: UTILITY_MODEL,
       messages: [
         { role: 'system', content: prompt },
         { role: 'user', content: fullQuery }
@@ -321,7 +323,7 @@ Return ONLY JSON with the following fields (use null for fields not provided):
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: UTILITY_MODEL,
       messages: [
         { role: 'system', content: prompt },
         { role: 'user', content: messages }
@@ -348,10 +350,14 @@ Return ONLY JSON with the following fields (use null for fields not provided):
  */
 export async function prepareChatMessages(apiKey, clinicData, conversationHistory, userMessage, options = {}) {
   const basePrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const systemPrompt = buildSystemPrompt(basePrompt, options);
   const customKnowledge = options.customKnowledge || null;
 
   const intents = await detectIntent(apiKey, userMessage, conversationHistory);
+  const resolvedLanguage = options.language === 'auto' ? intents.language : options.language;
+  const effectiveLanguage = resolvedLanguage && resolvedLanguage !== 'unknown'
+    ? resolvedLanguage
+    : options.language;
+  const systemPrompt = buildSystemPrompt(basePrompt, { ...options, language: effectiveLanguage });
   const context = buildContext(clinicData, userMessage, intents, customKnowledge);
 
   const messages = [
@@ -379,10 +385,10 @@ export async function generateChatResponse(apiKey, clinicData, conversationHisto
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: CHAT_MODEL,
       messages,
       max_tokens: 800,
-      temperature: 0.3
+      temperature: 0.5
     });
 
     return {
@@ -436,10 +442,10 @@ export async function* generateChatResponseStream(apiKey, clinicData, conversati
 
   try {
     const stream = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: CHAT_MODEL,
       messages,
       max_tokens: 800,
-      temperature: 0.3,
+      temperature: 0.5,
       stream: true
     });
 

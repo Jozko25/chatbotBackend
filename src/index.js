@@ -8,7 +8,7 @@ import { generateChatResponse, generateWelcomeMessage, generateChatResponseStrea
 import prisma from './services/prisma.js';
 import { protectedRoute, checkChatbotLimit, checkMessageLimit } from './middleware/auth.js';
 import { validateApiKey } from './middleware/apiKey.js';
-import { apiLimiter, scrapeLimiter, chatLimiter, widgetLimiter, strictLimiter } from './middleware/rateLimiter.js';
+import { apiLimiter, scrapeLimiter, chatLimiter, widgetLimiter, strictLimiter, demoScrapeLimiter, demoChatLimiter } from './middleware/rateLimiter.js';
 import { validateChatbotId, sanitizeBookingData } from './middleware/validation.js';
 import chatbotRoutes from './routes/chatbots.js';
 import apiKeyRoutes from './routes/apiKeys.js';
@@ -16,6 +16,8 @@ import usageRoutes from './routes/usage.js';
 import bookingRoutes from './routes/bookings.js';
 import { sendBookingNotifications } from './services/notifications.js';
 import { extractBookingData } from './chat/chatbot.js';
+import { CHAT_MODEL, UTILITY_MODEL } from './config/ai.js';
+import { normalizeWebsiteUrl } from './utils/url.js';
 import { createCalendarEvent, getAvailableSlots } from './services/googleCalendar.js';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -76,7 +78,7 @@ app.get('/health', (req, res) => {
 });
 
 // Demo chat endpoint for landing page (no auth required, uses OpenAI with tool calling)
-app.post('/api/demo/chat', strictLimiter, async (req, res) => {
+app.post('/api/demo/chat', strictLimiter, demoChatLimiter, async (req, res) => {
   const { messages, systemPrompt } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
@@ -113,7 +115,7 @@ app.post('/api/demo/chat', strictLimiter, async (req, res) => {
     ];
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: UTILITY_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         ...messages
@@ -149,6 +151,115 @@ app.post('/api/demo/chat', strictLimiter, async (req, res) => {
   } catch (error) {
     console.error('Demo chat error:', error);
     res.status(500).json({ error: 'Failed to generate response' });
+  }
+});
+
+// Demo scrape endpoint with streaming (no auth required, no DB persistence)
+app.post('/api/demo/scrape/stream', demoScrapeLimiter, async (req, res) => {
+  const { url } = req.body;
+
+  const normalizedUrl = normalizeWebsiteUrl(url);
+
+  if (!normalizedUrl) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    new URL(normalizedUrl);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL format' });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  req.setTimeout(0);
+  res.setTimeout(0);
+  res.flushHeaders();
+
+  const sendEvent = (type, data) => {
+    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+  };
+
+  console.log(`\n${'='.repeat(50)}`);
+  console.log(`Demo scraping (streaming): ${normalizedUrl}`);
+  console.log(`${'='.repeat(50)}`);
+
+  try {
+    const onProgress = (progress) => {
+      sendEvent(progress.type, progress);
+    };
+
+    const pages = await scrapeClinicWebsite(normalizedUrl, 10, 50, onProgress);
+
+    if (!pages || pages.length === 0) {
+      sendEvent('error', { error: 'Could not scrape content from this website' });
+      res.end();
+      return;
+    }
+
+    sendEvent('extracting', { step: 'regex', message: 'Extracting data from content...' });
+    const regexData = normalizeClinicData(pages, normalizedUrl);
+
+    let clinicData = regexData;
+    if (OPENAI_API_KEY) {
+      sendEvent('extracting', { step: 'llm', message: 'Using AI to improve data extraction...' });
+      const llmData = await extractWithLLM(OPENAI_API_KEY, regexData.raw_content, pages);
+      clinicData = mergeExtractedData(llmData, regexData);
+    }
+
+    const welcomeMessage = generateWelcomeMessage(clinicData);
+    const clinicDataWithWelcome = { ...clinicData, welcomeMessage, sourceUrl: normalizedUrl };
+
+    sendEvent('complete', {
+      clinicData: clinicDataWithWelcome,
+      name: clinicData.clinic_name || new URL(normalizedUrl).hostname
+    });
+
+    res.end();
+  } catch (error) {
+    console.error('Demo scrape error:', error);
+    sendEvent('error', { error: `Scraping failed: ${error.message}` });
+    res.end();
+  }
+});
+
+// Demo chatbot stream for user-created bots (no auth required)
+app.post('/api/demo/chatbot/stream', chatLimiter, demoChatLimiter, async (req, res) => {
+  const { clinicData, conversationHistory, message } = req.body;
+
+  if (!clinicData) return res.status(400).json({ error: 'clinicData required' });
+  if (!message) return res.status(400).json({ error: 'Message required' });
+  if (!OPENAI_API_KEY) return res.status(500).json({ error: 'OpenAI API key not configured' });
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  try {
+    const stream = generateChatResponseStream(
+      OPENAI_API_KEY,
+      clinicData,
+      conversationHistory || [],
+      message,
+      { bookingEnabled: false }
+    );
+
+    for await (const chunk of stream) {
+      res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (error) {
+    console.error('Demo chatbot stream error:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
   }
 });
 
@@ -254,12 +365,14 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
   const { url } = req.body;
   const user = req.user;
 
-  if (!url) {
+  const normalizedUrl = normalizeWebsiteUrl(url);
+
+  if (!normalizedUrl) {
     return res.status(400).json({ error: 'URL is required' });
   }
 
   try {
-    new URL(url);
+    new URL(normalizedUrl);
   } catch {
     return res.status(400).json({ error: 'Invalid URL format' });
   }
@@ -279,7 +392,7 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
   };
 
   console.log(`\n${'='.repeat(50)}`);
-  console.log(`Scraping (streaming): ${url} (user: ${user.email})`);
+  console.log(`Scraping (streaming): ${normalizedUrl} (user: ${user.email})`);
   console.log(`${'='.repeat(50)}`);
 
   try {
@@ -288,7 +401,7 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
       sendEvent(progress.type, progress);
     };
 
-    const pages = await scrapeClinicWebsite(url, 10, 50, onProgress);
+    const pages = await scrapeClinicWebsite(normalizedUrl, 10, 50, onProgress);
 
     if (!pages || pages.length === 0) {
       sendEvent('error', { error: 'Could not scrape content from this website' });
@@ -298,7 +411,7 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
 
     // First pass: regex-based extraction
     sendEvent('extracting', { step: 'regex', message: 'Extracting data from content...' });
-    const regexData = normalizeClinicData(pages, url);
+    const regexData = normalizeClinicData(pages, normalizedUrl);
 
     // Second pass: LLM-based extraction for better accuracy
     let clinicData = regexData;
@@ -316,8 +429,8 @@ app.post('/api/scrape/stream', protectedRoute, scrapeLimiter, checkChatbotLimit,
     const chatbot = await prisma.chatbot.create({
       data: {
         userId: user.id,
-        name: clinicData.clinic_name || new URL(url).hostname,
-        sourceUrl: url,
+        name: clinicData.clinic_name || new URL(normalizedUrl).hostname,
+        sourceUrl: normalizedUrl,
         clinicData: {
           clinic_name: clinicData.clinic_name,
           address: clinicData.address,
@@ -382,22 +495,24 @@ app.post('/api/scrape', protectedRoute, scrapeLimiter, checkChatbotLimit, async 
   const { url } = req.body;
   const user = req.user;
 
-  if (!url) {
+  const normalizedUrl = normalizeWebsiteUrl(url);
+
+  if (!normalizedUrl) {
     return res.status(400).json({ error: 'URL is required' });
   }
 
   try {
-    new URL(url);
+    new URL(normalizedUrl);
   } catch {
     return res.status(400).json({ error: 'Invalid URL format' });
   }
 
   console.log(`\n${'='.repeat(50)}`);
-  console.log(`Scraping: ${url} (user: ${user.email})`);
+  console.log(`Scraping: ${normalizedUrl} (user: ${user.email})`);
   console.log(`${'='.repeat(50)}`);
 
   try {
-    const pages = await scrapeClinicWebsite(url, 10, 50);
+    const pages = await scrapeClinicWebsite(normalizedUrl, 10, 50);
 
     if (!pages || pages.length === 0) {
       return res.status(400).json({
@@ -406,7 +521,7 @@ app.post('/api/scrape', protectedRoute, scrapeLimiter, checkChatbotLimit, async 
     }
 
     // First pass: regex-based extraction
-    const regexData = normalizeClinicData(pages, url);
+    const regexData = normalizeClinicData(pages, normalizedUrl);
 
     // Second pass: LLM-based extraction for better accuracy
     let clinicData = regexData;
@@ -422,8 +537,8 @@ app.post('/api/scrape', protectedRoute, scrapeLimiter, checkChatbotLimit, async 
     const chatbot = await prisma.chatbot.create({
       data: {
         userId: user.id,
-        name: clinicData.clinic_name || new URL(url).hostname,
-        sourceUrl: url,
+        name: clinicData.clinic_name || new URL(normalizedUrl).hostname,
+        sourceUrl: normalizedUrl,
         clinicData: {
           clinic_name: clinicData.clinic_name,
           address: clinicData.address,
@@ -856,7 +971,7 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
         ];
 
         const toolResponse = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: UTILITY_MODEL,
           messages: toolMessages,
           tools,
           tool_choice: 'auto',

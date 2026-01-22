@@ -1,8 +1,9 @@
 import OpenAI from 'openai';
+import { UTILITY_MODEL } from '../config/ai.js';
 
 /**
  * LLM-based data extraction
- * Uses GPT-4o-mini to intelligently extract structured clinic data from scraped content
+ * Uses the configured utility model to extract structured clinic data from scraped content
  */
 
 const EXTRACTION_PROMPT = `You are a data extraction assistant. Extract ALL useful information from the website content below.
@@ -83,7 +84,7 @@ export async function extractWithLLM(apiKey, rawContent, pageData) {
     console.log(`  - Pages included: ${contentChunks.length}`);
 
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: UTILITY_MODEL,
       messages: [
         {
           role: 'system',
