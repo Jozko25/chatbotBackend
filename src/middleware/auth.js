@@ -52,35 +52,22 @@ export async function attachUser(req, res, next) {
     const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || null;
     const avatarUrl = clerkUser.imageUrl || null;
 
-    console.log('\n========== AUTH DEBUG ==========');
-    console.log('clerkUserId:', clerkUserId);
-    console.log('email:', email);
-    console.log('name:', name);
-    console.log('================================\n');
-
     // First, try to find user by clerkUserId
     let user = await prisma.user.findUnique({
       where: { clerkUserId }
     });
-    console.log('[Auth] Find by clerkUserId:', user ? `Found user ${user.id} (${user.email})` : 'Not found');
 
     // Also check if there's a user with this email
     const userByEmail = await prisma.user.findUnique({
       where: { email }
     });
-    console.log('[Auth] Find by email:', userByEmail ? `Found user ${userByEmail.id} (${userByEmail.clerkUserId})` : 'Not found');
 
     if (user && userByEmail && user.id !== userByEmail.id) {
       // CONFLICT: Two different users exist - one by clerkUserId, one by email
       // This means we need to merge them. Keep the one with better plan/more data.
-      console.log('[Auth] CONFLICT: Two users found, merging...');
-
-      // Decide which user to keep (prefer the one with better plan or more chatbots)
       const keepUser = userByEmail.plan !== 'FREE' ? userByEmail :
                        user.plan !== 'FREE' ? user : userByEmail;
       const deleteUser = keepUser.id === user.id ? userByEmail : user;
-
-      console.log(`[Auth] Keeping user ${keepUser.id} (${keepUser.plan}), deleting ${deleteUser.id} (${deleteUser.plan})`);
 
       // Transfer chatbots from deleted user to kept user
       await prisma.chatbot.updateMany({
@@ -98,7 +85,6 @@ export async function attachUser(req, res, next) {
       await prisma.user.delete({
         where: { id: deleteUser.id }
       });
-      console.log(`[Auth] Deleted duplicate user ${deleteUser.id}`);
 
       // Update the kept user with new clerkUserId and info
       user = await prisma.user.update({
@@ -111,14 +97,9 @@ export async function attachUser(req, res, next) {
           lastLoginAt: new Date()
         }
       });
-      console.log('[Auth] Merged user updated');
 
     } else if (user) {
-      // User found by clerkUserId - check if email changed
-      if (user.email !== email) {
-        console.log(`[Auth] Email changed from ${user.email} to ${email}`);
-      }
-      console.log('[Auth] Updating existing user by clerkUserId');
+      // User found by clerkUserId - update with latest info
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -130,7 +111,6 @@ export async function attachUser(req, res, next) {
       });
     } else if (userByEmail) {
       // Not found by clerkUserId but found by email - link accounts
-      console.log(`[Auth] LINKING: Updating clerkUserId from ${userByEmail.clerkUserId} to ${clerkUserId}`);
       user = await prisma.user.update({
         where: { id: userByEmail.id },
         data: {
@@ -140,10 +120,8 @@ export async function attachUser(req, res, next) {
           lastLoginAt: new Date()
         }
       });
-      console.log('[Auth] Account linked successfully');
     } else {
       // No existing user - create new
-      console.log('[Auth] Creating new user');
       user = await prisma.user.create({
         data: {
           clerkUserId,
@@ -156,20 +134,15 @@ export async function attachUser(req, res, next) {
           limitResetAt: getNextMonthStart()
         }
       });
-      console.log('[Auth] New user created:', user.id);
     }
 
     // Check if we need to reset monthly usage
     user = await resetMonthlyUsageIfNeeded(user);
 
-    console.log('[Auth] Final user:', { id: user.id, email: user.email, plan: user.plan });
     req.user = user;
     next();
   } catch (error) {
-    console.error('========== AUTH ERROR ==========');
-    console.error('Error:', error.message);
-    console.error('Full error:', error);
-    console.error('================================');
+    console.error('[Auth] User sync failed:', error.message);
     return res.status(500).json({ error: 'Failed to sync user' });
   }
 }
@@ -209,8 +182,6 @@ export async function checkChatbotLimit(req, res, next) {
       status: { in: ['ACTIVE', 'PAUSED'] }
     }
   });
-
-  console.log(`[Chatbot Limit Check] User: ${user.email}, Plan: ${user.plan}, Active: ${chatbotCount}, Limit: ${limits.chatbots}`);
 
   if (chatbotCount >= limits.chatbots) {
     return res.status(403).json({
