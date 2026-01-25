@@ -5,6 +5,11 @@ import { generateWelcomeMessage } from '../chat/chatbot.js';
 
 const router = Router();
 
+// Debug logging
+function debugLog(category, ...args) {
+  console.log(`[CHATBOTS:${category}]`, new Date().toISOString(), ...args);
+}
+
 // Import demo chatbot into user account
 router.post('/import', checkChatbotLimit, async (req, res) => {
   const { clinicData, theme, sourceUrl } = req.body;
@@ -60,6 +65,7 @@ router.post('/import', checkChatbotLimit, async (req, res) => {
 
 // List user's chatbots
 router.get('/', async (req, res) => {
+  debugLog('LIST', 'GET /api/chatbots - User:', req.user?.id, req.user?.email);
   try {
     const chatbots = await prisma.chatbot.findMany({
       where: {
@@ -81,8 +87,10 @@ router.get('/', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
+    debugLog('LIST', 'Found', chatbots.length, 'chatbots');
     res.json(chatbots);
   } catch (error) {
+    debugLog('LIST', 'ERROR:', error.message);
     console.error('Error fetching chatbots:', error);
     res.status(500).json({ error: 'Failed to fetch chatbots' });
   }

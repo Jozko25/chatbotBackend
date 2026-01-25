@@ -3,47 +3,69 @@ import prisma from '../services/prisma.js';
 import { PLAN_LIMITS } from '../config/billing.js';
 import { clerkClient, requireClerkSecretKey } from '../services/clerk.js';
 
+// Debug logging
+const DEBUG = true;
+function debugLog(category, ...args) {
+  if (DEBUG) {
+    console.log(`[AUTH:${category}]`, new Date().toISOString(), ...args);
+  }
+}
+
 // Clerk JWT validation middleware
 export async function requireAuth(req, res, next) {
+  debugLog('VERIFY', 'Starting token verification for', req.method, req.path);
+
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
+  debugLog('VERIFY', 'Token present:', !!token, token ? `(length: ${token.length})` : '');
+
   if (!token) {
+    debugLog('VERIFY', 'REJECTED: No token provided');
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   let secretKey;
   try {
     secretKey = requireClerkSecretKey();
+    debugLog('VERIFY', 'Clerk secret key loaded, length:', secretKey?.length);
   } catch (error) {
-    console.error('[Auth] Missing Clerk secret key');
+    debugLog('VERIFY', 'REJECTED: Missing Clerk secret key:', error.message);
     return res.status(500).json({ error: 'Authentication misconfigured' });
   }
 
   try {
+    debugLog('VERIFY', 'Calling verifyToken...');
     const payload = await verifyToken(token, { secretKey });
+    debugLog('VERIFY', 'Token VALID! User:', payload.sub);
     req.auth = { payload };
     return next();
   } catch (error) {
-    console.error('[Auth] Token verification failed', error);
+    debugLog('VERIFY', 'Token INVALID:', error.message);
+    debugLog('VERIFY', 'Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     return res.status(401).json({ error: 'Unauthorized' });
   }
 }
 
 // Middleware to attach user to request (create if not exists)
 export async function attachUser(req, res, next) {
+  debugLog('USER', 'attachUser called for', req.method, req.path);
+
   if (!req.auth?.payload?.sub) {
+    debugLog('USER', 'REJECTED: No auth payload');
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   if (!clerkClient) {
-    console.error('[Auth] Clerk client not configured');
+    debugLog('USER', 'REJECTED: Clerk client not configured');
     return res.status(500).json({ error: 'Authentication misconfigured' });
   }
 
   try {
     const clerkUserId = req.auth.payload.sub;
+    debugLog('USER', 'Fetching Clerk user:', clerkUserId);
     const clerkUser = await clerkClient.users.getUser(clerkUserId);
+    debugLog('USER', 'Clerk user fetched:', clerkUser.emailAddresses?.[0]?.emailAddress);
 
     const primaryEmail = clerkUser.emailAddresses.find(
       (emailAddress) => emailAddress.id === clerkUser.primaryEmailAddressId
@@ -139,10 +161,12 @@ export async function attachUser(req, res, next) {
     // Check if we need to reset monthly usage
     user = await resetMonthlyUsageIfNeeded(user);
 
+    debugLog('USER', 'User attached successfully:', { id: user.id, email: user.email, plan: user.plan });
     req.user = user;
     next();
   } catch (error) {
-    console.error('[Auth] User sync failed:', error.message);
+    debugLog('USER', 'FAILED to sync user:', error.message);
+    debugLog('USER', 'Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     return res.status(500).json({ error: 'Failed to sync user' });
   }
 }
