@@ -12,7 +12,7 @@ datasource db {
 
 model User {
   id            String    @id @default(cuid())
-  auth0Sub      String    @unique @map("auth0_sub")
+  clerkUserId   String    @unique @map("auth0_sub")
   email         String    @unique
   name          String?
   avatarUrl     String?   @map("avatar_url")

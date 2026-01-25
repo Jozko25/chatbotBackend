@@ -1,13 +1,34 @@
-import { auth } from 'express-oauth2-jwt-bearer';
+import { verifyToken } from '@clerk/backend';
 import prisma from '../services/prisma.js';
 import { PLAN_LIMITS } from '../config/billing.js';
+import { clerkClient, requireClerkSecretKey } from '../services/clerk.js';
 
-// Auth0 JWT validation middleware
-export const requireAuth = auth({
-  audience: process.env.AUTH0_AUDIENCE,
-  issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
-  tokenSigningAlg: 'RS256'
-});
+// Clerk JWT validation middleware
+export async function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  let secretKey;
+  try {
+    secretKey = requireClerkSecretKey();
+  } catch (error) {
+    console.error('[Auth] Missing Clerk secret key');
+    return res.status(500).json({ error: 'Authentication misconfigured' });
+  }
+
+  try {
+    const payload = await verifyToken(token, { secretKey });
+    req.auth = { payload };
+    return next();
+  } catch (error) {
+    console.error('[Auth] Token verification failed', error);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
 
 // Middleware to attach user to request (create if not exists)
 export async function attachUser(req, res, next) {
@@ -15,37 +36,42 @@ export async function attachUser(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const auth0Sub = req.auth.payload.sub;
-  // Auth0 includes email in different claim depending on connection type
-  const email = req.auth.payload.email ||
-                req.auth.payload['https://xelochat.com/email'] ||
-                `${auth0Sub}@auth0.local`;
-  const name = req.auth.payload.name ||
-               req.auth.payload['https://xelochat.com/name'] ||
-               null;
-  const avatarUrl = req.auth.payload.picture || null;
-
-  console.log('\n========== AUTH DEBUG ==========');
-  console.log('auth0Sub:', auth0Sub);
-  console.log('email:', email);
-  console.log('name:', name);
-  console.log('================================\n');
+  if (!clerkClient) {
+    console.error('[Auth] Clerk client not configured');
+    return res.status(500).json({ error: 'Authentication misconfigured' });
+  }
 
   try {
-    // First, try to find user by auth0Sub
+    const clerkUserId = req.auth.payload.sub;
+    const clerkUser = await clerkClient.users.getUser(clerkUserId);
+
+    const primaryEmail = clerkUser.emailAddresses.find(
+      (emailAddress) => emailAddress.id === clerkUser.primaryEmailAddressId
+    )?.emailAddress;
+    const email = primaryEmail || clerkUser.emailAddresses[0]?.emailAddress || `${clerkUserId}@clerk.local`;
+    const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || null;
+    const avatarUrl = clerkUser.imageUrl || null;
+
+    console.log('\n========== AUTH DEBUG ==========');
+    console.log('clerkUserId:', clerkUserId);
+    console.log('email:', email);
+    console.log('name:', name);
+    console.log('================================\n');
+
+    // First, try to find user by clerkUserId
     let user = await prisma.user.findUnique({
-      where: { auth0Sub }
+      where: { clerkUserId }
     });
-    console.log('[Auth] Find by auth0Sub:', user ? `Found user ${user.id} (${user.email})` : 'Not found');
+    console.log('[Auth] Find by clerkUserId:', user ? `Found user ${user.id} (${user.email})` : 'Not found');
 
     // Also check if there's a user with this email
     const userByEmail = await prisma.user.findUnique({
       where: { email }
     });
-    console.log('[Auth] Find by email:', userByEmail ? `Found user ${userByEmail.id} (${userByEmail.auth0Sub})` : 'Not found');
+    console.log('[Auth] Find by email:', userByEmail ? `Found user ${userByEmail.id} (${userByEmail.clerkUserId})` : 'Not found');
 
     if (user && userByEmail && user.id !== userByEmail.id) {
-      // CONFLICT: Two different users exist - one by auth0Sub, one by email
+      // CONFLICT: Two different users exist - one by clerkUserId, one by email
       // This means we need to merge them. Keep the one with better plan/more data.
       console.log('[Auth] CONFLICT: Two users found, merging...');
 
@@ -74,11 +100,11 @@ export async function attachUser(req, res, next) {
       });
       console.log(`[Auth] Deleted duplicate user ${deleteUser.id}`);
 
-      // Update the kept user with new auth0Sub and info
+      // Update the kept user with new clerkUserId and info
       user = await prisma.user.update({
         where: { id: keepUser.id },
         data: {
-          auth0Sub,
+          clerkUserId,
           email,
           name: name || keepUser.name,
           avatarUrl: avatarUrl || keepUser.avatarUrl,
@@ -88,11 +114,11 @@ export async function attachUser(req, res, next) {
       console.log('[Auth] Merged user updated');
 
     } else if (user) {
-      // User found by auth0Sub - check if email changed
+      // User found by clerkUserId - check if email changed
       if (user.email !== email) {
         console.log(`[Auth] Email changed from ${user.email} to ${email}`);
       }
-      console.log('[Auth] Updating existing user by auth0Sub');
+      console.log('[Auth] Updating existing user by clerkUserId');
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -103,12 +129,12 @@ export async function attachUser(req, res, next) {
         }
       });
     } else if (userByEmail) {
-      // Not found by auth0Sub but found by email - link accounts
-      console.log(`[Auth] LINKING: Updating auth0Sub from ${userByEmail.auth0Sub} to ${auth0Sub}`);
+      // Not found by clerkUserId but found by email - link accounts
+      console.log(`[Auth] LINKING: Updating clerkUserId from ${userByEmail.clerkUserId} to ${clerkUserId}`);
       user = await prisma.user.update({
         where: { id: userByEmail.id },
         data: {
-          auth0Sub,
+          clerkUserId,
           name: name || userByEmail.name,
           avatarUrl: avatarUrl || userByEmail.avatarUrl,
           lastLoginAt: new Date()
@@ -120,7 +146,7 @@ export async function attachUser(req, res, next) {
       console.log('[Auth] Creating new user');
       user = await prisma.user.create({
         data: {
-          auth0Sub,
+          clerkUserId,
           email,
           name,
           avatarUrl,

@@ -1314,7 +1314,7 @@ app.listen(PORT, () => {
 ╔══════════════════════════════════════════════╗
 ║     XELOCHAT API                             ║
 ║     Running on port ${PORT}                      ║
-║     Auth: Auth0 JWT + API Keys               ║
+║     Auth: Clerk JWT + API Keys               ║
 ╚══════════════════════════════════════════════╝
   `);
 });

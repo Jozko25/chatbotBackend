@@ -48,7 +48,7 @@ This document outlines the security measures implemented in the XeloChat backend
 ## API Security
 
 ### Authentication
-- **JWT Tokens**: Auth0 JWT tokens for dashboard routes
+- **JWT Tokens**: Clerk JWT tokens for dashboard routes
 - **API Keys**: SHA-256 hashed API keys for widget routes
 - **Domain Whitelisting**: API keys can be restricted to specific domains
 
@@ -118,7 +118,7 @@ This document outlines the security measures implemented in the XeloChat backend
 
 **Why It's Safe**:
 1. **Dev Dependency Only**: Hono is only in Prisma's dev dependencies, not installed in production
-2. **Not Used in Runtime**: We use `express-oauth2-jwt-bearer` for JWT authentication, not Hono
+2. **Not Used in Runtime**: We use Clerk JWT verification for authentication, not Hono
 3. **Prisma Runtime**: Prisma's runtime (`@prisma/client`) does not use Hono
 4. **Override Applied**: Package.json includes an override to force Hono 4.11.4+ when possible
 
