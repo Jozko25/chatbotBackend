@@ -29,21 +29,6 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
-// ========== DEBUG LOGGING ==========
-const DEBUG = true;
-function debugLog(category, ...args) {
-  if (DEBUG) {
-    console.log(`[SERVER:${category}]`, new Date().toISOString(), ...args);
-  }
-}
-
-debugLog('CONFIG', 'Starting server...');
-debugLog('CONFIG', 'PORT =', PORT);
-debugLog('CONFIG', 'FRONTEND_URL =', process.env.FRONTEND_URL);
-debugLog('CONFIG', 'CORS_ALLOWED_ORIGINS =', process.env.CORS_ALLOWED_ORIGINS);
-debugLog('CONFIG', 'CLERK_SECRET_KEY exists =', !!process.env.CLERK_SECRET_KEY);
-debugLog('CONFIG', 'DATABASE_URL exists =', !!process.env.DATABASE_URL);
-
 // Security headers with Helmet
 app.use(helmet({
   contentSecurityPolicy: {
@@ -70,21 +55,15 @@ const allowedOrigins = rawAllowedOrigins
   .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
-debugLog('CORS', 'Allowed origins:', JSON.stringify(allowedOrigins));
-
 const strictCors = cors({
   origin(origin, callback) {
-    debugLog('CORS', 'Request origin:', origin);
     if (!origin) {
-      debugLog('CORS', 'No origin header - allowing (server-to-server)');
       return callback(null, true);
     }
     const normalizedOrigin = origin.replace(/\/+$/, '');
     if (allowedOrigins.includes(normalizedOrigin)) {
-      debugLog('CORS', 'Origin ALLOWED:', normalizedOrigin);
       return callback(null, true);
     }
-    debugLog('CORS', 'Origin BLOCKED:', normalizedOrigin, 'not in', allowedOrigins);
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -97,12 +76,6 @@ const widgetCors = cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   credentials: true,
   maxAge: 86400
-});
-
-// Request logging middleware
-app.use((req, res, next) => {
-  debugLog('REQUEST', req.method, req.path, '| Origin:', req.headers.origin || 'none', '| Auth:', req.headers.authorization ? 'Bearer ...' + req.headers.authorization.slice(-10) : 'none');
-  next();
 });
 
 app.use((req, res, next) => {
