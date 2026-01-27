@@ -1,3 +1,5 @@
+console.log('🚀🚀🚀 LOADING INDEX.JS - CLAUDE EDIT CONFIRMED 🚀🚀🚀');
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -117,11 +119,17 @@ app.get('/health', (req, res) => {
 
 // Demo chat endpoint for landing page (no auth required, uses OpenAI with tool calling)
 app.post('/api/demo/chat', strictLimiter, demoChatLimiter, async (req, res) => {
+  const startTime = Date.now();
+  console.log(`\n🟢 /api/demo/chat REQUEST - ${new Date().toISOString()}`);
+
   const { messages, systemPrompt } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'Messages array is required' });
   }
+
+  const lastMessage = messages[messages.length - 1]?.content || '';
+  console.log(`📝 Last message: "${lastMessage}"`);
 
   if (!OPENAI_API_KEY) {
     return res.status(500).json({ error: 'OpenAI API key not configured' });
@@ -137,7 +145,7 @@ app.post('/api/demo/chat', strictLimiter, demoChatLimiter, async (req, res) => {
         type: 'function',
         function: {
           name: 'show_booking_form',
-          description: 'Display the booking form to allow the user to schedule an appointment, demo, consultation, or any kind of reservation. Use this when the user expresses intent to book, schedule, reserve, or make an appointment.',
+          description: 'Display the booking form when user wants to book, schedule, reserve, make an appointment, or says things like "chcem sa booknut", "objednat", "rezervovat", "book", "schedule".',
           parameters: {
             type: 'object',
             properties: {
@@ -152,10 +160,11 @@ app.post('/api/demo/chat', strictLimiter, demoChatLimiter, async (req, res) => {
       }
     ];
 
+    const apiStart = Date.now();
     const response = await openai.chat.completions.create({
       model: UTILITY_MODEL,
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: systemPrompt + '\n\nIMPORTANT: If the user wants to book, schedule, or make an appointment (in any language - e.g. "chcem sa booknut", "objednat sa", "book", "schedule"), you MUST call the show_booking_form tool.' },
         ...messages
       ],
       tools,
@@ -163,22 +172,30 @@ app.post('/api/demo/chat', strictLimiter, demoChatLimiter, async (req, res) => {
       max_tokens: 500,
       temperature: 0.7
     });
+    console.log(`⏱️  OpenAI API: ${Date.now() - apiStart}ms`);
 
     const choice = response.choices[0];
     const message = choice.message;
+
+    console.log(`🔧 Tool calls:`, message.tool_calls ? JSON.stringify(message.tool_calls.map(t => t.function.name)) : 'none');
 
     // Check if the AI called a tool
     if (message.tool_calls && message.tool_calls.length > 0) {
       const toolCall = message.tool_calls[0];
 
       if (toolCall.function.name === 'show_booking_form') {
+        console.log(`🔔 ✅ BOOKING TOOL CALLED - sending button`);
+        console.log(`✅ Total time: ${Date.now() - startTime}ms\n`);
         // Return with tool call indicator and a message
         return res.json({
-          message: message.content || "I'd be happy to help you book an appointment! Click the button below to fill in your details.",
+          message: message.content || "Super! Klikni na tlačidlo nižšie a vyplň svoje údaje.",
           toolCall: 'show_booking_form'
         });
       }
     }
+
+    console.log(`❌ No booking tool called`);
+    console.log(`✅ Total time: ${Date.now() - startTime}ms\n`);
 
     // Regular response without tool call
     res.json({
@@ -280,18 +297,49 @@ app.post('/api/demo/chatbot/stream', chatLimiter, demoChatLimiter, async (req, r
   res.flushHeaders();
 
   try {
+    console.log(`\n🔵 DEMO CHAT REQUEST - ${new Date().toISOString()}`);
+    console.log(`Message: "${message}"`);
+
+    const prepareStart = Date.now();
+    // Enable booking and prepare messages with intent detection
+    const prepared = await prepareChatMessages(
+      OPENAI_API_KEY,
+      clinicData,
+      conversationHistory || [],
+      message,
+      { bookingEnabled: true }
+    );
+    console.log(`⏱️  Prepare messages: ${Date.now() - prepareStart}ms`);
+    console.log(`📊 Detected intents:`, JSON.stringify(prepared.intents));
+
+    // Check if user wants to book - send booking button signal
+    if (prepared.intents?.booking) {
+      res.write(`data: ${JSON.stringify({ toolCall: 'show_booking_form' })}\n\n`);
+      console.log('🔔 ✅ BOOKING BUTTON SENT TO FRONTEND');
+    } else {
+      console.log('❌ No booking intent detected - button not sent');
+    }
+
+    const streamStart = Date.now();
     const stream = generateChatResponseStream(
       OPENAI_API_KEY,
       clinicData,
       conversationHistory || [],
       message,
-      { bookingEnabled: false }
+      { bookingEnabled: true, prepared }
     );
+    console.log(`⏱️  Stream started: ${Date.now() - streamStart}ms`);
 
+    let firstChunk = true;
     for await (const chunk of stream) {
+      if (firstChunk) {
+        console.log(`⏱️  First token received`);
+        firstChunk = false;
+      }
       res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
     }
 
+    console.log(`✅ DEMO CHAT COMPLETE\n`);
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
   } catch (error) {

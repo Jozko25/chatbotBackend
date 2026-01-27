@@ -9,34 +9,28 @@ const STYLE_PROMPTS = {
   CONCISE: 'Be brief and to-the-point. Give short, direct answers without unnecessary elaboration.'
 };
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful virtual assistant for a business website. Your role is to help visitors find information about products, services, prices, opening hours, and contact details.
+const DEFAULT_SYSTEM_PROMPT = `You are a friendly, helpful virtual assistant for a business. You're here to chat with visitors and help them find information about products, services, prices, and contact details.
 
-STRICT RULES YOU MUST FOLLOW:
+HOW TO INTERACT:
 
-1. ONLY answer using information from the CONTEXT provided below. This context comes directly from the business website.
+1. Be conversational and natural. If someone says "hey" or "how are you", respond like a normal person would. You can engage in brief small talk, but gently guide the conversation toward how you can help them.
 
-2. If information is NOT in the context, say you don't have that information and suggest contacting the business directly.
+2. Use the CONTEXT below (from the business website) to answer questions about the business. When answering business questions, stick to the facts from the context.
 
-3. NEVER guess or make up information. Only state facts from the context.
+3. If someone asks about something not in the context, be honest and suggest they contact the business directly. Don't make things up.
 
-4. NEVER discuss topics unrelated to this business.
+4. Keep your answers clear and concise. Format lists nicely when showing products, services, or prices.
 
-5. Be polite and professional. Use a friendly, helpful tone and natural, human-sounding language.
+5. LANGUAGE: Always respond in the SAME LANGUAGE the user writes in. Match their language naturally - if they write in Slovak, respond in Slovak. If English, respond in English, etc.
 
-6. Keep answers concise but complete. If asked about prices or products, list relevant ones from the context.
+6. When helping users choose between options, use the available information to make helpful recommendations based on what they're looking for.
 
-7. When listing products/services/prices, format them clearly.
+7. BOOKING REQUESTS: If someone wants to book or schedule something:
+   - Ask for their name, phone number, email (optional), what service they want, and their preferred date/time
+   - Once you have the essentials (name and phone at minimum), confirm everything and let them know you'll submit their request
+   - Suggest relevant services from the context
 
-8. IMPORTANT - LANGUAGE: Always respond in the SAME LANGUAGE the user writes in. If the user writes in Slovak, respond in Slovak. If they write in Czech, respond in Czech. If English, respond in English. Match their language exactly.
-
-9. When helping users choose between options (e.g., cars, products, plans), use the available data to make informed recommendations based on their stated preferences.
-
-10. BOOKING REQUESTS: If the user wants to book, schedule, or make an appointment:
-    - Collect their name, phone number, email (optional), preferred service, and preferred date/time
-    - Once you have the essential info (at least name and phone), confirm the details and let them know you'll submit the booking request
-    - Be helpful in suggesting available services from the context
-
-You represent this business - be helpful within these boundaries.`;
+Remember: Be helpful, be human, and guide conversations toward how you can assist with the business. You don't need to be a robot - friendly and natural wins.`;
 
 // Field labels for booking
 const BOOKING_FIELD_LABELS = {
@@ -95,14 +89,13 @@ function buildSystemPrompt(basePrompt, options = {}) {
 }
 
 /**
- * Build context from clinic data based on query
+ * Build context from clinic data - let the AI decide what's relevant
  * @param {object} clinicData - The clinic/business data
  * @param {string} query - User's query
  * @param {object} detectedIntents - Detected intents from LLM
  * @param {string} customKnowledge - Optional custom knowledge to append
  */
 function buildContext(clinicData, query, detectedIntents = {}, customKnowledge = null) {
-  const queryLower = query.toLowerCase();
   const chunks = [];
 
   // Always include basic info
@@ -113,9 +106,9 @@ function buildContext(clinicData, query, detectedIntents = {}, customKnowledge =
 - Email: ${clinicData.email || 'Not available'}
 - Opening Hours: ${clinicData.opening_hours || 'Not available'}`);
 
-  // High-level positioning content
+  // Include business description and positioning
   if (clinicData.about) {
-    chunks.push(`ABOUT THE BUSINESS:\n${clinicData.about}`);
+    chunks.push(`ABOUT:\n${clinicData.about}`);
   }
 
   if (Array.isArray(clinicData.key_benefits) && clinicData.key_benefits.length > 0) {
@@ -132,124 +125,47 @@ function buildContext(clinicData, query, detectedIntents = {}, customKnowledge =
   }
 
   if (clinicData.testimonials_summary) {
-    chunks.push(`TESTIMONIALS SUMMARY:\n${clinicData.testimonials_summary}`);
+    chunks.push(`TESTIMONIALS:\n${clinicData.testimonials_summary}`);
+  }
+
+  // Include all services/products with prices
+  if (clinicData.services && clinicData.services.length > 0) {
+    const serviceList = clinicData.services
+      .slice(0, 150) // Cap to avoid token limits
+      .map(s => `- ${s.name}: ${s.price}`)
+      .join('\n');
+    chunks.push(`SERVICES & PRICES (${clinicData.services.length > 150 ? 'first 150 of ' + clinicData.services.length : clinicData.services.length} total):\n${serviceList}`);
+  }
+
+  // Include team/staff
+  if (clinicData.doctors && clinicData.doctors.length > 0) {
+    const staffList = clinicData.doctors
+      .map(d => `- ${d.name}${d.specialization ? ` (${d.specialization})` : ''}`)
+      .join('\n');
+    chunks.push(`TEAM:\n${staffList}`);
+  }
+
+  // Include FAQ
+  if (Array.isArray(clinicData.faq) && clinicData.faq.length > 0) {
+    const faqs = clinicData.faq
+      .slice(0, 10)
+      .map(f => `Q: ${f.question}\nA: ${f.answer}`)
+      .join('\n\n');
+    chunks.push(`FREQUENTLY ASKED QUESTIONS:\n${faqs}`);
+  }
+
+  // Include raw content excerpt
+  if (clinicData.raw_content && clinicData.raw_content.length > 100) {
+    chunks.push(`ADDITIONAL WEBSITE CONTENT:\n${clinicData.raw_content.slice(0, 3000)}`);
   }
 
   if (clinicData.additional_info) {
     chunks.push(`ADDITIONAL INFO:\n${clinicData.additional_info}`);
   }
 
-  // Include services/prices if relevant or always for comprehensive answers
-  const priceKeywords = ['price', 'cost', 'how much', 'cena', 'koľko', 'stojí', 'cenník', 'fee', 'stoji'];
-  const serviceKeywords = ['service', 'treatment', 'procedure', 'služb', 'ošetren', 'liečb', 'offer', 'do you'];
-  const locationKeywords = ['adresa', 'address', 'contact', 'kontakt', 'sídlo', 'sidl', 'pobočk', 'pobock'];
-
-  const wantsPrice = detectedIntents.price || priceKeywords.some(kw => queryLower.includes(kw));
-  const wantsService = detectedIntents.service || serviceKeywords.some(kw => queryLower.includes(kw));
-  const wantsLocation = detectedIntents.contact || locationKeywords.some(kw => queryLower.includes(kw));
-  const wantsHours = detectedIntents.hours || queryLower.includes('hours') || queryLower.includes('otvárac') || queryLower.includes('opening');
-  const wantsDoctors = detectedIntents.doctors || false;
-
-  // Filter out common stop words from query for better matching
-  const stopWords = ['aka', 'aky', 'aká', 'aké', 'ako', 'je', 'su', 'sú', 'pre', 'za', 'na', 'the', 'is', 'for', 'what', 'how', 'much', 'cena', 'price', 'cost', 'kolko', 'koľko', 'stoji', 'stojí'];
-
-  if (clinicData.services && clinicData.services.length > 0) {
-    // If asking about specific service, try to find it
-    // Remove punctuation and split into words
-    const queryWords = queryLower
-      .replace(/[?!.,;:'"„"()]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 1 && !stopWords.includes(w));
-
-    const relevantServices = clinicData.services.filter(s => {
-      const serviceLower = s.name.toLowerCase();
-      // Match if any meaningful query word appears in service name
-      return queryWords.some(word => serviceLower.includes(word));
-    });
-
-    console.log(`Query: "${query}" -> Words: [${queryWords.join(', ')}] -> Found ${relevantServices.length} services`);
-    if (relevantServices.length > 0) {
-      console.log(`Matched: ${relevantServices.map(s => s.name).join(', ')}`);
-    }
-
-    if (relevantServices.length > 0 && relevantServices.length <= 30) {
-      const serviceList = relevantServices
-        .map(s => `- ${s.name}: ${s.price}`)
-        .join('\n');
-      chunks.push(`MATCHING SERVICES & PRICES:\n${serviceList}`);
-    }
-
-    // If asking about prices/services in general, include a capped full list
-    if (wantsPrice || wantsService || (relevantServices.length === 0 && (wantsPrice || wantsService))) {
-      const allServices = clinicData.services
-        .slice(0, 180)
-        .map(s => `- ${s.name}: ${s.price}`)
-        .join('\n');
-      if (allServices.length > 0) {
-        chunks.push(`ALL AVAILABLE SERVICES & PRICES (first ${clinicData.services.length > 180 ? '180 of ' + clinicData.services.length : clinicData.services.length}):\n${allServices}`);
-      }
-    }
-  }
-
-  // Include team/staff if relevant
-  const staffKeywords = ['doctor', 'staff', 'team', 'lekár', 'doktor', 'tím', 'who', 'employee', 'zamestnan'];
-  if (staffKeywords.some(kw => queryLower.includes(kw))) {
-    if (clinicData.doctors && clinicData.doctors.length > 0) {
-      const staffList = clinicData.doctors
-        .map(d => `- ${d.name}${d.specialization ? ` (${d.specialization})` : ''}`)
-        .join('\n');
-      chunks.push(`TEAM/STAFF:\n${staffList}`);
-    }
-  } else if (wantsDoctors) {
-    if (clinicData.doctors && clinicData.doctors.length > 0) {
-      const staffList = clinicData.doctors
-        .map(d => `- ${d.name}${d.specialization ? ` (${d.specialization})` : ''}`)
-        .join('\n');
-      chunks.push(`TEAM/STAFF:\n${staffList}`);
-    }
-  }
-
-  // Include location/contact emphasis when asked
-  if (wantsLocation) {
-    chunks.push(`LOCATION & CONTACT:
-- Address: ${clinicData.address || 'Not available'}
-- Phone: ${clinicData.phone || 'Not available'}
-- Email: ${clinicData.email || 'Not available'}
-- Opening Hours: ${clinicData.opening_hours || 'Not available'}`);
-  }
-
-  // Include hours emphasis if specifically requested
-  if (wantsHours && clinicData.opening_hours) {
-    chunks.push(`OPENING HOURS:\n${clinicData.opening_hours}`);
-  }
-
-  // Include FAQ when available to help with common questions
-  if (Array.isArray(clinicData.faq) && clinicData.faq.length > 0) {
-    const faqs = clinicData.faq
-      .slice(0, 12)
-      .map(f => `Q: ${f.question}\nA: ${f.answer}`)
-      .join('\n\n');
-    chunks.push(`FAQ:\n${faqs}`);
-  }
-
-  // Search raw content for specific matches
-  if (clinicData.raw_content) {
-    const rawQueryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
-    const paragraphs = clinicData.raw_content.split(/\n{2,}/);
-
-    const relevant = paragraphs
-      .filter(p => rawQueryWords.some(w => p.toLowerCase().includes(w)))
-      .slice(0, 5)
-      .join('\n\n');
-
-    if (relevant.length > 50) {
-      chunks.push(`ADDITIONAL CONTEXT FROM WEBSITE:\n${relevant.slice(0, 4000)}`);
-    }
-  }
-
   // Add custom knowledge if provided
   if (customKnowledge && customKnowledge.trim()) {
-    chunks.push(`ADDITIONAL KNOWLEDGE (provided by business owner):\n${customKnowledge.trim()}`);
+    chunks.push(`CUSTOM KNOWLEDGE (from business owner):\n${customKnowledge.trim()}`);
   }
 
   return chunks.join('\n\n---\n\n');
@@ -473,19 +389,19 @@ export async function* generateChatResponseStream(apiKey, clinicData, conversati
  */
 export function generateWelcomeMessage(clinicData) {
   const name = clinicData.clinic_name || 'this website';
-  const parts = [`Welcome! I'm the virtual assistant for ${name}.`];
+  const parts = [`Hey! I'm here to help you with ${name}.`];
 
   const available = [];
-  if (clinicData.services?.length > 0) available.push(`${clinicData.services.length} products/services`);
-  if (clinicData.doctors?.length > 0) available.push(`${clinicData.doctors.length} team members`);
-  if (clinicData.opening_hours) available.push('opening hours');
-  if (clinicData.phone || clinicData.email) available.push('contact information');
+  if (clinicData.services?.length > 0) available.push('products and services');
+  if (clinicData.doctors?.length > 0) available.push('our team');
+  if (clinicData.opening_hours) available.push('hours');
+  if (clinicData.phone || clinicData.email) available.push('contact info');
 
   if (available.length > 0) {
-    parts.push(`I can help you with: ${available.join(', ')}.`);
+    parts.push(`Ask me about ${available.join(', ')} - or anything else!`);
+  } else {
+    parts.push('What can I help you with?');
   }
-
-  parts.push('How can I help you today?');
 
   return parts.join(' ');
 }
