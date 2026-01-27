@@ -297,28 +297,16 @@ app.post('/api/demo/chatbot/stream', chatLimiter, demoChatLimiter, async (req, r
   res.flushHeaders();
 
   try {
-    console.log(`\n🔵 DEMO CHAT REQUEST - ${new Date().toISOString()}`);
-    console.log(`Message: "${message}"`);
+    const requestStart = Date.now();
+    console.log(`\n========== DEMO CHAT REQUEST ==========`);
+    console.log(`[${new Date().toISOString()}] Message: "${message}"`);
 
-    const prepareStart = Date.now();
-    // Enable booking and prepare messages with intent detection
-    const prepared = await prepareChatMessages(
-      OPENAI_API_KEY,
+    const prepared = prepareChatMessages(
       clinicData,
       conversationHistory || [],
       message,
       { bookingEnabled: true }
     );
-    console.log(`⏱️  Prepare messages: ${Date.now() - prepareStart}ms`);
-    console.log(`📊 Detected intents:`, JSON.stringify(prepared.intents));
-
-    // Check if user wants to book - send booking button signal
-    if (prepared.intents?.booking) {
-      res.write(`data: ${JSON.stringify({ toolCall: 'show_booking_form' })}\n\n`);
-      console.log('🔔 ✅ BOOKING BUTTON SENT TO FRONTEND');
-    } else {
-      console.log('❌ No booking intent detected - button not sent');
-    }
 
     const streamStart = Date.now();
     const stream = generateChatResponseStream(
@@ -328,18 +316,23 @@ app.post('/api/demo/chatbot/stream', chatLimiter, demoChatLimiter, async (req, r
       message,
       { bookingEnabled: true, prepared }
     );
-    console.log(`⏱️  Stream started: ${Date.now() - streamStart}ms`);
 
     let firstChunk = true;
-    for await (const chunk of stream) {
-      if (firstChunk) {
-        console.log(`⏱️  First token received`);
-        firstChunk = false;
+    for await (const event of stream) {
+      if (event.type === 'content') {
+        if (firstChunk) {
+          console.log(`[TIMING] First token (TTFT): ${Date.now() - streamStart}ms`);
+          firstChunk = false;
+        }
+        res.write(`data: ${JSON.stringify({ content: event.content })}\n\n`);
+      } else if (event.type === 'tool_call' && event.name === 'show_booking_form') {
+        res.write(`data: ${JSON.stringify({ toolCall: 'show_booking_form' })}\n\n`);
+        console.log(`[DEBUG] Booking tool called`);
       }
-      res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
     }
 
-    console.log(`✅ DEMO CHAT COMPLETE\n`);
+    console.log(`[TIMING] Total demo chat: ${Date.now() - requestStart}ms`);
+    console.log(`========== DEMO CHAT COMPLETE ==========\n`);
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
   } catch (error) {
@@ -948,9 +941,14 @@ app.get('/api/widget/chatbot/:id', validateApiKey, widgetLimiter, async (req, re
 
 // Widget chat endpoint (API key auth)
 app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, res) => {
+  const requestStartTime = Date.now();
   const { chatbotId, conversationHistory, message, sessionId } = req.body;
   const user = req.user;
   const apiKeyData = req.apiKeyData;
+
+  console.log(`\n========== WIDGET CHAT REQUEST ==========`);
+  console.log(`[${new Date().toISOString()}] chatbotId=${chatbotId} sessionId=${sessionId || 'anonymous'}`);
+  console.log(`Message: "${message}"`);
 
   if (!chatbotId) return res.status(400).json({ error: 'Chatbot ID required' });
   if (!message) return res.status(400).json({ error: 'Message required' });
@@ -1019,64 +1017,18 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
   res.flushHeaders();
 
   try {
-    const prepared = await prepareChatMessages(
-      OPENAI_API_KEY,
+    // Single-call approach: prepareChatMessages is now synchronous (no intent detection)
+    const prepareStart = Date.now();
+    const prepared = prepareChatMessages(
       clinicData,
       conversationHistory || [],
       message,
       aiOptions
     );
+    console.log(`[TIMING] prepareChatMessages: ${Date.now() - prepareStart}ms`);
 
-    // Tool-call detection for booking (before streaming)
-    let bookingToolCall = false;
-    if (chatbot.bookingEnabled && OPENAI_API_KEY) {
-      try {
-        const { default: OpenAI } = await import('openai');
-        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-        const tools = [
-          {
-            type: 'function',
-            function: {
-              name: 'show_booking_form',
-              description: 'Display the booking form to allow the user to schedule an appointment, demo, consultation, or any kind of reservation.',
-              parameters: {
-                type: 'object',
-                properties: {
-                  reason: {
-                    type: 'string',
-                    description: 'Brief description of what the user wants to book'
-                  }
-                },
-                required: []
-              }
-            }
-          }
-        ];
-
-        const toolMessages = [
-          { role: 'system', content: 'If the user wants to book or schedule an appointment, call the show_booking_form tool.' },
-          ...prepared.messages
-        ];
-
-        const toolResponse = await openai.chat.completions.create({
-          model: UTILITY_MODEL,
-          messages: toolMessages,
-          tools,
-          tool_choice: 'auto',
-          max_tokens: 200,
-          temperature: 0.2
-        });
-
-        const toolCall = toolResponse.choices[0]?.message?.tool_calls?.[0];
-        if (toolCall?.function?.name === 'show_booking_form') {
-          bookingToolCall = true;
-          res.write(`data: ${JSON.stringify({ toolCall: 'show_booking_form' })}\n\n`);
-        }
-      } catch (toolError) {
-        console.error('Tool call detection error:', toolError);
-      }
-    }
-
+    // Single streaming LLM call with integrated tool calling
+    const streamStart = Date.now();
     const stream = generateChatResponseStream(
       OPENAI_API_KEY,
       clinicData,
@@ -1086,10 +1038,52 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
     );
 
     let fullResponse = '';
-    for await (const chunk of stream) {
-      fullResponse += chunk;
-      res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+    let firstTokenTime = null;
+    let bookingToolCall = false;
+
+    for await (const event of stream) {
+      if (event.type === 'content') {
+        if (!firstTokenTime) {
+          firstTokenTime = Date.now();
+          console.log(`[TIMING] First token (TTFT): ${firstTokenTime - streamStart}ms`);
+        }
+        fullResponse += event.content;
+        res.write(`data: ${JSON.stringify({ content: event.content })}\n\n`);
+      } else if (event.type === 'tool_call' && event.name === 'show_booking_form') {
+        bookingToolCall = true;
+        res.write(`data: ${JSON.stringify({ toolCall: 'show_booking_form' })}\n\n`);
+        console.log(`[TIMING] Booking tool detected by LLM`);
+      }
     }
+    // If the LLM called the booking tool but produced no text, ask the LLM for a short reply
+    if (bookingToolCall && !fullResponse.trim()) {
+      try {
+        const { default: OpenAI } = await import('openai');
+        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+        const followUpStart = Date.now();
+        const followUp = await openai.chat.completions.create({
+          model: UTILITY_MODEL,
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant. The user requested a booking and the booking form is now being shown. Write a single short sentence acknowledging this, in the SAME language the user wrote in. Do not ask for details — the form handles that.' },
+            { role: 'user', content: message }
+          ],
+          max_tokens: 60,
+          temperature: 0.5
+        });
+        const fallbackText = followUp.choices[0]?.message?.content || '';
+        console.log(`[TIMING] Booking fallback text: ${Date.now() - followUpStart}ms`);
+        if (fallbackText) {
+          fullResponse = fallbackText;
+          res.write(`data: ${JSON.stringify({ content: fallbackText })}\n\n`);
+        }
+      } catch (fallbackErr) {
+        console.error('[ERROR] Booking fallback text failed:', fallbackErr.message);
+      }
+    }
+
+    const streamDuration = Date.now() - streamStart;
+    console.log(`[TIMING] Full stream duration: ${streamDuration}ms`);
+    console.log(`[TIMING] Response length: ${fullResponse.length} chars`);
 
     // Save messages to conversation
     if (conversation) {
@@ -1101,7 +1095,7 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
       });
     }
 
-    // Try to auto-submit booking if user provided info and booking intent was detected
+    // Try to auto-submit booking if the LLM called the booking tool
     if (bookingToolCall) {
       try {
         const booking = await tryAutoSubmitBooking(chatbot, conversationHistory, message, user.id);
@@ -1130,11 +1124,16 @@ app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, r
       }
     });
 
+    const totalDuration = Date.now() - requestStartTime;
+    console.log(`[TIMING] Total request duration: ${totalDuration}ms`);
+    console.log(`========== WIDGET CHAT COMPLETE ==========\n`);
+
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
 
   } catch (error) {
     console.error('Widget stream error:', error);
+    console.log(`[TIMING] Request failed after ${Date.now() - requestStartTime}ms`);
     res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
     res.end();
   }
