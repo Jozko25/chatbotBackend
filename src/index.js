@@ -445,7 +445,7 @@ app.get('/api/integrations/google-calendar/callback', async (req, res) => {
 
     const tokens = await exchangeCodeForTokens(code);
     if (!tokens.accessToken) {
-      return res.redirect(`${FRONTEND_URL}/dashboard/chatbots/${chatbotId}/settings?tab=integrations&error=no_access_token`);
+      return res.redirect(`${FRONTEND_URL}/dashboard/chatbots/${chatbotId}?tab=integrations&error=no_access_token`);
     }
 
     const encryptedAccessToken = encryptToken(tokens.accessToken);
@@ -486,7 +486,7 @@ app.get('/api/integrations/google-calendar/callback', async (req, res) => {
     });
 
     console.log(`Google Calendar connected for chatbot ${chatbotId} (user ${userId})`);
-    res.redirect(`${FRONTEND_URL}/dashboard/chatbots/${chatbotId}/settings?tab=integrations&success=google_calendar_connected`);
+    res.redirect(`${FRONTEND_URL}/dashboard/chatbots/${chatbotId}?tab=integrations&success=google_calendar_connected`);
 
   } catch (error) {
     console.error('Google Calendar callback error:', error);
