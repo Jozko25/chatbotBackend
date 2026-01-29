@@ -1036,6 +1036,120 @@ app.get('/api/widget/chatbot/:id', validateApiKey, widgetLimiter, async (req, re
   });
 });
 
+// Preview chat endpoint (authenticated user testing their own chatbot)
+app.post('/api/chatbots/:chatbotId/preview/chat', protectedRoute, async (req, res) => {
+  const requestStartTime = Date.now();
+  const chatbotId = req.params.chatbotId;
+  const { conversationHistory, message, sessionId } = req.body;
+  const user = req.user;
+
+  console.log(`\n========== PREVIEW CHAT REQUEST ==========`);
+  console.log(`[${new Date().toISOString()}] chatbotId=${chatbotId} user=${user.id}`);
+  console.log(`Message: "${message}"`);
+
+  if (!message) return res.status(400).json({ error: 'Message required' });
+
+  // Get chatbot (verify ownership)
+  const chatbot = await prisma.chatbot.findFirst({
+    where: {
+      id: chatbotId,
+      userId: user.id
+    }
+  });
+
+  if (!chatbot) {
+    return res.status(404).json({ error: 'Chatbot not found' });
+  }
+
+  // Reconstruct clinicData
+  const clinicData = {
+    ...chatbot.clinicData,
+    raw_content: chatbot.rawContent
+  };
+
+  // Get custom AI settings including communication style
+  const aiOptions = {
+    systemPrompt: chatbot.systemPrompt || null,
+    customKnowledge: chatbot.customKnowledge || null,
+    communicationStyle: chatbot.communicationStyle || 'PROFESSIONAL',
+    language: chatbot.language || 'auto',
+    customGreeting: chatbot.customGreeting || null,
+    bookingEnabled: chatbot.bookingEnabled || false,
+    bookingFields: chatbot.bookingFields || ['name', 'email', 'preferredDate', 'preferredTime'],
+    bookingPromptMessage: chatbot.bookingPromptMessage || null
+  };
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  try {
+    const prepared = prepareChatMessages(
+      clinicData,
+      conversationHistory || [],
+      message,
+      aiOptions
+    );
+
+    const stream = generateChatResponseStream(
+      OPENAI_API_KEY,
+      clinicData,
+      conversationHistory || [],
+      message,
+      { ...aiOptions, prepared }
+    );
+
+    let fullResponse = '';
+    let bookingToolCall = false;
+
+    for await (const event of stream) {
+      if (event.type === 'content') {
+        fullResponse += event.content;
+        res.write(`data: ${JSON.stringify({ content: event.content })}\n\n`);
+      } else if (event.type === 'tool_call' && event.name === 'show_booking_form') {
+        bookingToolCall = true;
+        res.write(`data: ${JSON.stringify({ toolCall: 'show_booking_form' })}\n\n`);
+      }
+    }
+
+    // If the LLM called the booking tool but produced no text, generate a short reply
+    if (bookingToolCall && !fullResponse.trim()) {
+      try {
+        const { default: OpenAI } = await import('openai');
+        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+        const followUp = await openai.chat.completions.create({
+          model: UTILITY_MODEL,
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant. The user requested a booking and the booking form is now being shown. Write a single short sentence acknowledging this, in the SAME language the user wrote in. Do not ask for details — the form handles that.' },
+            { role: 'user', content: message }
+          ],
+          max_tokens: 60,
+          temperature: 0.5
+        });
+        const fallbackText = followUp.choices[0]?.message?.content || '';
+        if (fallbackText) {
+          fullResponse = fallbackText;
+          res.write(`data: ${JSON.stringify({ content: fallbackText })}\n\n`);
+        }
+      } catch (fallbackErr) {
+        console.error('[ERROR] Preview booking fallback text failed:', fallbackErr.message);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+    console.log(`[TIMING] Preview chat total: ${Date.now() - requestStartTime}ms`);
+  } catch (error) {
+    console.error('[ERROR] Preview chat error:', error.message);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
 // Widget chat endpoint (API key auth)
 app.post('/api/widget/chat/stream', validateApiKey, widgetLimiter, async (req, res) => {
   const requestStartTime = Date.now();
