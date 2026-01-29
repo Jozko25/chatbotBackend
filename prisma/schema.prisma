@@ -34,6 +34,7 @@ model User {
   apiKeys       ApiKey[]
   usageRecords  UsageRecord[]
   subscription  Subscription?
+  integrations  Integration[]
 
   @@map("users")
 }
@@ -140,6 +141,7 @@ model Chatbot {
   apiKeys         ApiKey[]
   usageRecords    UsageRecord[]
   bookingRequests BookingRequest[]
+  integrations    Integration[]
 
   @@index([userId])
   @@index([sourceUrl])
@@ -348,4 +350,50 @@ enum BookingStatus {
   CONFIRMED   // Business confirmed the booking
   CANCELLED   // Booking was cancelled
   COMPLETED   // Booking was completed
+}
+
+// ============================================
+// INTEGRATIONS (Google Calendar, etc.)
+// ============================================
+
+model Integration {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  chatbotId       String    @map("chatbot_id")
+
+  // Integration type
+  provider        IntegrationProvider
+
+  // OAuth tokens (encrypted)
+  accessToken     String    @map("access_token") @db.Text
+  refreshToken    String?   @map("refresh_token") @db.Text
+  tokenExpiresAt  DateTime? @map("token_expires_at")
+
+  // Provider-specific settings
+  calendarId      String?   @map("calendar_id")  // For Google Calendar: which calendar to use
+  settings        Json      @default("{}")       // Additional provider settings
+
+  // Status
+  isConnected     Boolean   @default(true) @map("is_connected")
+  lastSyncAt      DateTime? @map("last_sync_at")
+  error           String?                        // Last error message if any
+
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chatbot         Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+
+  @@unique([chatbotId, provider])
+  @@index([userId])
+  @@index([chatbotId])
+  @@index([provider])
+  @@map("integrations")
+}
+
+enum IntegrationProvider {
+  GOOGLE_CALENDAR
+  // Future: CALENDLY, CAL_COM, OUTLOOK, etc.
 }

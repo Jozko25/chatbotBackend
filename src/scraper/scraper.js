@@ -24,6 +24,10 @@ const PRIORITY_PATTERNS = [
   /kontakt/i, /contact/i,
   /o-nas/i, /about/i, /team/i,
   /ordinacne/i, /hour/i, /open/i,
+  // Team/people pages in various languages
+  /ludia/i, /tym/i, /personal/i, /zamestnanci/i, /lekari/i, /lekar/i,
+  /doktori/i, /odbornici/i, /specialisti/i, /nas-tym/i, /nasi-lekari/i,
+  /doctors/i, /staff/i, /our-team/i, /meet-the-team/i, /practitioners/i,
   // Product/model pages for dealerships, e-commerce
   /models/i, /product/i, /vozidl/i,
   /sedan/i, /suv/i, /coupe/i, /kombi/i, /hatchback/i,
@@ -265,7 +269,7 @@ function extractPageData($, url) {
     url,
     title,
     h1,
-    content: mainContent.slice(0, 30000),
+    content: mainContent.slice(0, 50000), // Increased to capture more content per page
     prices,
     phones,
     emails,
@@ -304,16 +308,150 @@ async function scrapeSinglePage(context, url, cleanStartUrl, navTimeoutMs, rende
         // Continue anyway if this times out
       }
 
-      const html = await page.content();
+      // Handle carousels/sliders - click through and ACCUMULATE all content
+      // This is critical for team pages where doctors are in a carousel
+      let carouselContent = '';
+      try {
+        carouselContent = await page.evaluate(async () => {
+          const collectedContent = new Set(); // Use Set to avoid duplicates
+
+          // Common carousel selectors for next/arrow buttons
+          const carouselNextSelectors = [
+            '.swiper-button-next',
+            '.slick-next',
+            '.carousel-next',
+            '.owl-next',
+            '.splide__arrow--next',
+            '[class*="swiper"][class*="next"]',
+            '[class*="slider"][class*="next"]',
+            '[class*="carousel"][class*="next"]',
+            'button[aria-label*="next" i]',
+            'button[aria-label*="Next"]',
+            '[class*="arrow-right"]',
+            '[class*="arrow"][class*="next"]',
+            // SVG arrows often used as next buttons
+            'svg[class*="next"]',
+            'svg[class*="right"]'
+          ];
+
+          // Pagination dot selectors - click each dot to load that slide
+          const paginationSelectors = [
+            '.swiper-pagination-bullet',
+            '.slick-dots button',
+            '.slick-dots li',
+            '.carousel-indicators button',
+            '.carousel-indicators li',
+            '.owl-dots button',
+            '.owl-dot',
+            '.splide__pagination button',
+            '[class*="pagination"] button',
+            '[class*="pagination"] [class*="dot"]',
+            '[class*="dots"] button',
+            '[class*="indicator"]'
+          ];
+
+          // Common carousel container selectors
+          const carouselContainerSelectors = [
+            '.swiper-wrapper',
+            '.slick-track',
+            '.carousel-inner',
+            '.owl-stage',
+            '.splide__list',
+            '[class*="swiper"]',
+            '[class*="slider"]',
+            '[class*="carousel"]'
+          ];
+
+          // Function to extract text from carousel items
+          const extractCarouselText = () => {
+            for (const containerSel of carouselContainerSelectors) {
+              const containers = document.querySelectorAll(containerSel);
+              containers.forEach(container => {
+                // Get all visible slides/items
+                const items = container.querySelectorAll('[class*="slide"], [class*="item"], [class*="card"]');
+                items.forEach(item => {
+                  const text = item.innerText?.trim();
+                  if (text && text.length > 10) {
+                    collectedContent.add(text);
+                  }
+                });
+              });
+            }
+          };
+
+          // Collect initial content
+          extractCarouselText();
+
+          // Method 1: Click through pagination dots (most reliable)
+          for (const selector of paginationSelectors) {
+            const dots = document.querySelectorAll(selector);
+            if (dots.length > 1) {
+              for (const dot of dots) {
+                try {
+                  if (dot && dot.offsetParent !== null) {
+                    dot.click();
+                    await new Promise(r => setTimeout(r, 400));
+                    extractCarouselText();
+                  }
+                } catch {
+                  // Continue to next dot
+                }
+              }
+            }
+          }
+
+          // Method 2: Click next button repeatedly
+          for (const selector of carouselNextSelectors) {
+            const buttons = document.querySelectorAll(selector);
+            for (const btn of buttons) {
+              if (!btn || btn.offsetParent === null) continue; // Skip invisible buttons
+
+              // Click through carousel multiple times
+              for (let i = 0; i < 20; i++) {
+                try {
+                  btn.click();
+                  await new Promise(r => setTimeout(r, 400)); // Wait for animation
+                  extractCarouselText(); // Collect content after each click
+                } catch {
+                  break;
+                }
+              }
+            }
+          }
+
+          return Array.from(collectedContent).join('\n\n');
+        });
+      } catch (e) {
+        // Carousel handling is optional, continue if it fails
+        console.log(`    Carousel extraction skipped: ${e.message}`);
+      }
+
+      let html = await page.content();
+
+      // Append carousel content to the HTML so it gets extracted
+      if (carouselContent && carouselContent.length > 100) {
+        html += `\n<!-- CAROUSEL_CONTENT_START -->\n<div class="extracted-carousel-content">${carouselContent}</div>\n<!-- CAROUSEL_CONTENT_END -->`;
+        console.log(`    + Extracted ${carouselContent.length} chars from carousels`);
+      }
       const $ = cheerio.load(html);
       const pageData = extractPageData($, url);
       const totalMs = Date.now() - startedAt;
       console.log(`    ✓ ${url.slice(0, 70)} (${navMs}ms nav, ${totalMs}ms total, ${pageData.content.length} chars${attempt === 2 ? ', retry' : ''})`);
 
       // Extract links for next depth
-      const links = $('a[href]')
+      // Prioritize navigation links which often contain the most important pages
+      const navLinks = $('nav a[href], header a[href], [role="navigation"] a[href], .nav a[href], .menu a[href], .navigation a[href]')
         .map((_, el) => $(el).attr('href'))
-        .get()
+        .get();
+
+      const allLinks = $('a[href]')
+        .map((_, el) => $(el).attr('href'))
+        .get();
+
+      // Combine nav links first (they're most important), then other links
+      const combinedLinks = [...new Set([...navLinks, ...allLinks])];
+
+      const links = combinedLinks
         .map(href => normalizeUrl(href, url))
         .filter(href => href && isSameDomain(cleanStartUrl, href));
 
@@ -338,7 +476,7 @@ async function scrapeSinglePage(context, url, cleanStartUrl, navTimeoutMs, rende
  * @param {number} maxPages - Maximum pages to scrape
  * @param {function} onProgress - Optional callback for progress updates
  */
-export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 25, onProgress = null) {
+export async function scrapeClinicWebsite(startUrl, maxDepth = 10, maxPages = 50, onProgress = null) {
   const cleanStartUrl = normalizeUrl(startUrl, startUrl);
   const CONCURRENCY = Number(process.env.SCRAPER_CONCURRENCY) || 3;
   const NAV_TIMEOUT_MS = Number(process.env.SCRAPER_NAV_TIMEOUT_MS) || 15000;

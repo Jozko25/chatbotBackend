@@ -19,11 +19,13 @@ import bookingRoutes from './routes/bookings.js';
 import billingRoutes from './routes/billing.js';
 import stripeWebhookRoutes from './routes/stripeWebhook.js';
 import accountRoutes from './routes/account.js';
+import integrationsRoutes from './routes/integrations.js';
 import { sendBookingNotifications } from './services/notifications.js';
 import { extractBookingData } from './chat/chatbot.js';
 import { CHAT_MODEL, UTILITY_MODEL } from './config/ai.js';
 import { normalizeWebsiteUrl } from './utils/url.js';
 import { createCalendarEvent, getAvailableSlots } from './services/googleCalendar.js';
+import { createUserCalendarEvent, getUserAvailableSlots } from './services/userCalendar.js';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -399,6 +401,100 @@ app.get('/api/config', (req, res) => {
 });
 
 // ============================================
+// OAUTH CALLBACKS (public - must be before protected routes)
+// ============================================
+
+// OAuth callback needs to be public (no JWT) since user is redirected from Google
+app.get('/api/integrations/google-calendar/callback', async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+  // Import OAuth functions dynamically
+  const { validateState, exchangeCodeForTokens, getUserCalendars, encryptToken } = await import('./services/googleOAuth.js');
+
+  if (oauthError) {
+    console.error('Google OAuth error:', oauthError);
+    return res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=${encodeURIComponent(oauthError)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=missing_params`);
+  }
+
+  try {
+    const stateResult = validateState(state);
+    if (!stateResult.valid) {
+      return res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=${encodeURIComponent(stateResult.error)}`);
+    }
+
+    const { userId, chatbotId } = stateResult;
+
+    // Verify user exists
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=user_not_found`);
+    }
+
+    // Verify chatbot exists and belongs to user
+    const chatbot = await prisma.chatbot.findFirst({
+      where: { id: chatbotId, userId }
+    });
+    if (!chatbot) {
+      return res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=chatbot_not_found`);
+    }
+
+    const tokens = await exchangeCodeForTokens(code);
+    if (!tokens.accessToken) {
+      return res.redirect(`${FRONTEND_URL}/dashboard/chatbots/${chatbotId}/settings?tab=integrations&error=no_access_token`);
+    }
+
+    const encryptedAccessToken = encryptToken(tokens.accessToken);
+    const encryptedRefreshToken = tokens.refreshToken ? encryptToken(tokens.refreshToken) : null;
+
+    let defaultCalendarId = 'primary';
+    try {
+      const calendars = await getUserCalendars(tokens.accessToken, tokens.refreshToken);
+      const primaryCalendar = calendars.find(c => c.primary);
+      if (primaryCalendar) defaultCalendarId = primaryCalendar.id;
+    } catch (calError) {
+      console.error('Failed to get calendars:', calError);
+    }
+
+    await prisma.integration.upsert({
+      where: { chatbotId_provider: { chatbotId, provider: 'GOOGLE_CALENDAR' } },
+      create: {
+        userId,
+        chatbotId,
+        provider: 'GOOGLE_CALENDAR',
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
+        tokenExpiresAt: tokens.expiresAt,
+        calendarId: defaultCalendarId,
+        isConnected: true,
+        settings: {},
+        lastSyncAt: new Date()
+      },
+      update: {
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
+        tokenExpiresAt: tokens.expiresAt,
+        calendarId: defaultCalendarId,
+        isConnected: true,
+        error: null,
+        lastSyncAt: new Date()
+      }
+    });
+
+    console.log(`Google Calendar connected for chatbot ${chatbotId} (user ${userId})`);
+    res.redirect(`${FRONTEND_URL}/dashboard/chatbots/${chatbotId}/settings?tab=integrations&success=google_calendar_connected`);
+
+  } catch (error) {
+    console.error('Google Calendar callback error:', error);
+    res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=${encodeURIComponent(error.message)}`);
+  }
+});
+
+// ============================================
 // PROTECTED DASHBOARD ROUTES (JWT auth)
 // ============================================
 
@@ -408,6 +504,7 @@ app.use('/api/usage', protectedRoute, usageRoutes);
 app.use('/api/bookings', protectedRoute, bookingRoutes);
 app.use('/api/billing', protectedRoute, billingRoutes);
 app.use('/api/account', protectedRoute, accountRoutes);
+app.use('/api/integrations', protectedRoute, integrationsRoutes);
 
 // Check user limits endpoint (call before scraping to verify)
 app.get('/api/limits', protectedRoute, async (req, res) => {
@@ -760,11 +857,11 @@ async function tryAutoSubmitBooking(chatbot, conversationHistory, userMessage, u
     });
   }
 
-  // Create Google Calendar event
+  // Create Google Calendar event (uses user's calendar if connected)
   try {
-    const calendarResult = await createCalendarEvent(booking, chatbot);
+    const calendarResult = await createUserCalendarEvent(booking, chatbot, userId);
     if (calendarResult.success) {
-      console.log('Calendar event created for auto-booking:', calendarResult.eventId);
+      console.log(`Calendar event created for auto-booking: ${calendarResult.eventId} (userCalendar: ${calendarResult.userCalendar || false})`);
     }
   } catch (calendarError) {
     console.error('Auto-booking calendar error:', calendarError);
@@ -1260,10 +1357,10 @@ app.post('/api/widget/booking', validateApiKey, strictLimiter, async (req, res) 
       });
     }
 
-    // Create Google Calendar event
+    // Create Google Calendar event (uses user's calendar if connected)
     let calendarResult = { success: false };
     try {
-      calendarResult = await createCalendarEvent(booking, chatbot);
+      calendarResult = await createUserCalendarEvent(booking, chatbot, user.id);
       if (calendarResult.success) {
         // Update booking with calendar event ID
         await prisma.bookingRequest.update({
@@ -1272,7 +1369,8 @@ app.post('/api/widget/booking', validateApiKey, strictLimiter, async (req, res) 
             data: {
               ...finalBookingData,
               calendarEventId: calendarResult.eventId,
-              calendarEventLink: calendarResult.eventLink
+              calendarEventLink: calendarResult.eventLink,
+              userCalendar: calendarResult.userCalendar || false
             }
           }
         });
@@ -1286,7 +1384,7 @@ app.post('/api/widget/booking', validateApiKey, strictLimiter, async (req, res) 
     console.log(`  Phone: ${finalBookingData.customerPhone || 'N/A'}`);
     console.log(`  Service: ${finalBookingData.service || 'N/A'}`);
     console.log(`  Notifications:`, notificationResults);
-    console.log(`  Calendar:`, calendarResult);
+    console.log(`  Calendar:`, calendarResult, `(userCalendar: ${calendarResult.userCalendar || false})`);
 
     res.json({
       success: true,
@@ -1305,15 +1403,33 @@ app.post('/api/widget/booking', validateApiKey, strictLimiter, async (req, res) 
 });
 
 // Widget endpoint to get available time slots (API key auth)
-app.get('/api/widget/availability/:date', validateApiKey, widgetLimiter, async (req, res) => {
-  const { date } = req.params;
+// Uses chatbot's connected calendar if available
+app.get('/api/widget/availability/:chatbotId/:date', validateApiKey, widgetLimiter, async (req, res) => {
+  const { chatbotId, date } = req.params;
+  const user = req.user;
+  const apiKeyData = req.apiKeyData;
 
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
   }
 
+  // Check if API key is scoped to this chatbot
+  if (apiKeyData.chatbotId && apiKeyData.chatbotId !== chatbotId) {
+    return res.status(403).json({ error: 'API key not valid for this chatbot' });
+  }
+
+  // Verify chatbot exists and belongs to user
+  const chatbot = await prisma.chatbot.findFirst({
+    where: { id: chatbotId, userId: user.id, status: 'ACTIVE' }
+  });
+
+  if (!chatbot) {
+    return res.status(404).json({ error: 'Chatbot not found' });
+  }
+
   try {
-    const result = await getAvailableSlots(date);
+    // Try chatbot's calendar first, fall back to service account
+    const result = await getUserAvailableSlots(date, chatbotId);
     res.json(result);
   } catch (error) {
     console.error('Availability check error:', error);

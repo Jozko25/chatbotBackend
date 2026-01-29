@@ -8,10 +8,11 @@ import { UTILITY_MODEL } from '../config/ai.js';
 
 const EXTRACTION_PROMPT = `You are a data extraction assistant. Extract ALL useful information from the website content below.
 
-RULES:
-- Extract EVERYTHING that could help answer questions about this business
+CRITICAL RULES:
+- Extract EVERYTHING - be EXHAUSTIVE and COMPLETE
 - If something is not found, use null
 - For services: extract ALL offerings, even without prices. Use "Contact for pricing" if no price.
+- For doctors/team: extract EVERY SINGLE person mentioned - doctors, nurses, assistants, staff, everyone with a name and role. This is CRITICAL. Do NOT skip anyone. Extract ALL team members even if there are 20+.
 - Be thorough - extract every service, feature, benefit, and capability mentioned
 
 Return JSON with this structure:
@@ -25,7 +26,7 @@ Return JSON with this structure:
     {"name": "Service/product name", "price": "Price or 'Contact for pricing'", "category": "Brief description of what it is/does"}
   ],
   "doctors": [
-    {"name": "Person's name", "specialization": "Their role/title"}
+    {"name": "Person's name WITH TITLE (e.g. MUDr., Dr., Bc., Mgr., MDDr., doc.)", "specialization": "Their role/title/specialty"}
   ],
   "about": "What the business does, who it helps, its mission/approach (2-3 sentences)",
   "key_benefits": ["Benefit 1", "Benefit 2", "..."],
@@ -37,6 +38,8 @@ Return JSON with this structure:
   "testimonials_summary": "Summary of what clients say if testimonials exist",
   "additional_info": "Any other important info (policies, guarantees, etc.)"
 }
+
+IMPORTANT: The doctors array must include EVERY person mentioned - not just 3-5, but ALL of them (could be 10, 20, or more). Include doctors, nurses, specialists, assistants, receptionists, managers - everyone with a name.
 
 SCRAPED CONTENT:
 `;
@@ -55,13 +58,14 @@ export async function extractWithLLM(apiKey, rawContent, pageData) {
 
   const contentChunks = [];
   let totalChars = 0;
-  const maxTotalChars = 60000;
+  const maxTotalChars = 120000; // 120k chars - enough for comprehensive extraction
 
   for (const page of sortedPages) {
     if (totalChars >= maxTotalChars) break;
 
     const remainingChars = maxTotalChars - totalChars;
-    const pageContent = page.content?.slice(0, Math.min(remainingChars, 8000)) || '';
+    // Allow up to 15k per page to capture more content from important pages
+    const pageContent = page.content?.slice(0, Math.min(remainingChars, 15000)) || '';
 
     if (pageContent.length > 50) { // Skip nearly empty pages
       contentChunks.push(`=== PAGE: ${page.title || page.url} ===\nURL: ${page.url}\n${pageContent}`);
@@ -95,7 +99,7 @@ export async function extractWithLLM(apiKey, rawContent, pageData) {
           content: EXTRACTION_PROMPT + combinedContent
         }
       ],
-      max_tokens: 4000,
+      max_tokens: 8000, // Increased to handle more doctors/services
       temperature: 0.1,
       response_format: { type: 'json_object' }
     });
