@@ -33,11 +33,23 @@ function createOAuth2Client() {
 export function generateAuthUrl(userId, chatbotId) {
   const oauth2Client = createOAuth2Client();
 
-  // Create a state parameter to prevent CSRF and track the user + chatbot
-  const state = Buffer.from(JSON.stringify({
+  // Create a state parameter with HMAC signature to prevent CSRF and tampering
+  const payload = JSON.stringify({
     userId,
     chatbotId,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    nonce: crypto.randomBytes(16).toString('hex')
+  });
+
+  // Sign the payload with HMAC
+  const signature = crypto
+    .createHmac('sha256', ENCRYPTION_KEY || 'fallback-key')
+    .update(payload)
+    .digest('hex');
+
+  const state = Buffer.from(JSON.stringify({
+    payload,
+    signature
   })).toString('base64');
 
   const url = oauth2Client.generateAuthUrl({
@@ -134,18 +146,20 @@ export async function revokeToken(accessToken) {
 export function encryptToken(token) {
   if (!token) return null;
   if (!ENCRYPTION_KEY) {
-    console.warn('ENCRYPTION_KEY not set, storing token unencrypted');
-    return token;
+    throw new Error('ENCRYPTION_KEY is required for secure token storage');
   }
 
-  const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+  // Use a unique salt per encryption for better security
+  const salt = crypto.randomBytes(16);
+  const key = crypto.scryptSync(ENCRYPTION_KEY, salt, 32);
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
 
   let encrypted = cipher.update(token, 'utf8', 'hex');
   encrypted += cipher.final('hex');
 
-  return iv.toString('hex') + ':' + encrypted;
+  // Format: salt:iv:encrypted
+  return salt.toString('hex') + ':' + iv.toString('hex') + ':' + encrypted;
 }
 
 /**
@@ -154,26 +168,41 @@ export function encryptToken(token) {
 export function decryptToken(encryptedToken) {
   if (!encryptedToken) return null;
   if (!ENCRYPTION_KEY) {
-    return encryptedToken;
+    throw new Error('ENCRYPTION_KEY is required for token decryption');
   }
 
   try {
-    const [ivHex, encrypted] = encryptedToken.split(':');
-    if (!ivHex || !encrypted) {
-      return encryptedToken; // Not encrypted, return as-is
+    const parts = encryptedToken.split(':');
+
+    // Handle new format (salt:iv:encrypted)
+    if (parts.length === 3) {
+      const [saltHex, ivHex, encrypted] = parts;
+      const salt = Buffer.from(saltHex, 'hex');
+      const key = crypto.scryptSync(ENCRYPTION_KEY, salt, 32);
+      const iv = Buffer.from(ivHex, 'hex');
+      const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+
+      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      return decrypted;
     }
 
-    const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
-    const iv = Buffer.from(ivHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    // Handle old format (iv:encrypted) for backward compatibility
+    if (parts.length === 2) {
+      const [ivHex, encrypted] = parts;
+      const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+      const iv = Buffer.from(ivHex, 'hex');
+      const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
 
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
+      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      return decrypted;
+    }
 
-    return decrypted;
+    throw new Error('Invalid encrypted token format');
   } catch (error) {
     console.error('Token decryption failed:', error);
-    return encryptedToken; // Return as-is if decryption fails
+    throw new Error('Failed to decrypt token');
   }
 }
 
@@ -183,13 +212,30 @@ export function decryptToken(encryptedToken) {
 export function validateState(state) {
   try {
     const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
+    const { payload, signature } = decoded;
+
+    if (!payload || !signature) {
+      return { valid: false, error: 'Invalid state format' };
+    }
+
+    // Verify HMAC signature to prevent tampering
+    const expectedSignature = crypto
+      .createHmac('sha256', ENCRYPTION_KEY || 'fallback-key')
+      .update(payload)
+      .digest('hex');
+
+    if (!crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSignature, 'hex'))) {
+      return { valid: false, error: 'Invalid state signature' };
+    }
+
+    const data = JSON.parse(payload);
 
     // Check if state is not too old (5 minutes max)
-    if (Date.now() - decoded.timestamp > 5 * 60 * 1000) {
+    if (Date.now() - data.timestamp > 5 * 60 * 1000) {
       return { valid: false, error: 'State expired' };
     }
 
-    return { valid: true, userId: decoded.userId, chatbotId: decoded.chatbotId };
+    return { valid: true, userId: data.userId, chatbotId: data.chatbotId };
   } catch (error) {
     return { valid: false, error: 'Invalid state' };
   }
