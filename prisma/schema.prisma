@@ -397,3 +397,22 @@ enum IntegrationProvider {
   GOOGLE_CALENDAR
   // Future: CALENDLY, CAL_COM, OUTLOOK, etc.
 }
+
+// ============================================
+// BLOG POSTS (marketing / content)
+// ============================================
+
+model BlogPost {
+  id          String    @id @default(cuid())
+  title       String    @map("title")
+  slug        String    @unique @map("slug")
+  excerpt     String    @db.Text @map("excerpt")
+  content     String    @db.Text @map("content")
+  publishedAt DateTime  @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([publishedAt])
+  @@index([slug])
+  @@map("blog_posts")
+}

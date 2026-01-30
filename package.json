@@ -9,7 +9,11 @@
     "start:prod": "node src/index.js",
     "dev": "node --env-file=.env --watch src/index.js",
     "db:push": "npx prisma db push",
-    "db:generate": "npx prisma generate"
+    "db:generate": "npx prisma generate",
+    "db:seed": "npx prisma db seed"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   },
   "dependencies": {
     "@clerk/backend": "latest",

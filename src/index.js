@@ -20,6 +20,7 @@ import billingRoutes from './routes/billing.js';
 import stripeWebhookRoutes from './routes/stripeWebhook.js';
 import accountRoutes from './routes/account.js';
 import integrationsRoutes from './routes/integrations.js';
+import blogRoutes from './routes/blog.js';
 import { sendBookingNotifications } from './services/notifications.js';
 import { extractBookingData } from './chat/chatbot.js';
 import { CHAT_MODEL, UTILITY_MODEL } from './config/ai.js';
@@ -493,6 +494,11 @@ app.get('/api/integrations/google-calendar/callback', async (req, res) => {
     res.redirect(`${FRONTEND_URL}/dashboard/chatbots?error=${encodeURIComponent(error.message)}`);
   }
 });
+
+// ============================================
+// PUBLIC BLOG (no auth)
+// ============================================
+app.use('/api/blog', blogRoutes);
 
 // ============================================
 // PROTECTED DASHBOARD ROUTES (JWT auth)
