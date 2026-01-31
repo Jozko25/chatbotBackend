@@ -844,7 +844,7 @@ async function tryAutoSubmitBooking(chatbot, conversationHistory, userMessage, u
   });
 
   // Send notifications
-  if (chatbot.notifyOnBooking && (chatbot.notificationEmail || chatbot.notificationWebhook)) {
+  if (chatbot.notifyOnBooking && (chatbot.notificationEmail || chatbot.clinicData?.email || chatbot.notificationWebhook)) {
     const notificationResults = await sendBookingNotifications(booking, chatbot);
 
     console.log('Notification results:', notificationResults);

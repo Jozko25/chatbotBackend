@@ -78,7 +78,7 @@ function generateBookingEmailHtml(booking, chatbot) {
       <!-- Footer -->
       <div style="padding: 16px 24px; background: #f9fafb; border-top: 1px solid #eee; text-align: center;">
         <p style="margin: 0; color: #6b7280; font-size: 12px;">
-          Powered by XeloChat
+          Powered by XeloChat · Delivered via Resend
         </p>
       </div>
     </div>
@@ -102,7 +102,7 @@ ${data}
 Submitted: ${new Date(booking.createdAt).toLocaleString('sk-SK', { dateStyle: 'full', timeStyle: 'short' })}
 
 ---
-Powered by XeloChat
+Powered by XeloChat · Delivered via Resend
   `.trim();
 }
 
@@ -113,7 +113,8 @@ Powered by XeloChat
  * @returns {object} - { success: boolean, error?: string }
  */
 export async function sendBookingEmail(booking, chatbot) {
-  if (!chatbot.notificationEmail) {
+  const recipientEmail = chatbot.notificationEmail || chatbot.clinicData?.email;
+  if (!recipientEmail) {
     return { success: false, error: 'No notification email configured' };
   }
 
@@ -123,11 +124,11 @@ export async function sendBookingEmail(booking, chatbot) {
   }
 
   try {
-    console.log(`Sending email from ${FROM_EMAIL} to ${chatbot.notificationEmail}`);
+    console.log(`Sending email from ${FROM_EMAIL} to ${recipientEmail}`);
     
     const result = await resend.emails.send({
       from: FROM_EMAIL,
-      to: chatbot.notificationEmail,
+      to: recipientEmail,
       replyTo: booking.customerEmail || undefined,
       subject: `New Booking Request - ${booking.customerName || 'Customer'} - ${chatbot.name}`,
       html: generateBookingEmailHtml(booking, chatbot),
@@ -207,7 +208,7 @@ export async function sendBookingNotifications(booking, chatbot) {
   const results = {};
 
   // Send email if configured
-  if (chatbot.notificationEmail && chatbot.notifyOnBooking) {
+  if ((chatbot.notificationEmail || chatbot.clinicData?.email) && chatbot.notifyOnBooking) {
     results.email = await sendBookingEmail(booking, chatbot);
   }
 
