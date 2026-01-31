@@ -484,4 +484,59 @@ router.get('/:id/stats', async (req, res) => {
   }
 });
 
+// Get anonymized chatbot insights (no raw message content)
+router.get('/:id/insights', async (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days || '30', 10) || 30, 1), 365);
+
+  try {
+    const chatbot = await prisma.chatbot.findFirst({
+      where: {
+        id: req.params.id,
+        userId: req.user.id,
+        status: { not: 'DELETED' }
+      },
+      select: { id: true }
+    });
+
+    if (!chatbot) {
+      return res.status(404).json({ error: 'Chatbot not found' });
+    }
+
+    const insight = await prisma.chatbotInsight.findFirst({
+      where: {
+        chatbotId: req.params.id,
+        rangeDays: days
+      },
+      orderBy: { generatedAt: 'desc' }
+    });
+
+    if (!insight) {
+      return res.json({
+        rangeDays: days,
+        totalMessages: 0,
+        pricingQuestions: 0,
+        locationQuestions: 0,
+        bookingCount: 0,
+        topServices: [],
+        notProvidedServices: [],
+        couldntFindServices: []
+      });
+    }
+
+    res.json({
+      rangeDays: insight.rangeDays,
+      totalMessages: insight.totalMessages,
+      pricingQuestions: insight.pricingQuestions,
+      locationQuestions: insight.locationQuestions,
+      bookingCount: insight.bookingCount,
+      topServices: insight.topServices || [],
+      notProvidedServices: insight.notProvidedServices || [],
+      couldntFindServices: insight.couldntFindServices || []
+    });
+  } catch (error) {
+    console.error('Error fetching chatbot insights:', error);
+    res.status(500).json({ error: 'Failed to fetch insights' });
+  }
+});
+
 export default router;

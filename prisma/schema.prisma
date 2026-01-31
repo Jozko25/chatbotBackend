@@ -142,6 +142,7 @@ model Chatbot {
   usageRecords    UsageRecord[]
   bookingRequests BookingRequest[]
   integrations    Integration[]
+  insights        ChatbotInsight[]
 
   @@index([userId])
   @@index([sourceUrl])
@@ -350,6 +351,37 @@ enum BookingStatus {
   CONFIRMED   // Business confirmed the booking
   CANCELLED   // Booking was cancelled
   COMPLETED   // Booking was completed
+}
+
+// ============================================
+// INSIGHTS (ANONYMIZED CHAT TRENDS)
+// ============================================
+
+model ChatbotInsight {
+  id                   String   @id @default(cuid())
+  chatbotId            String   @map("chatbot_id")
+
+  rangeDays            Int      @default(30) @map("range_days")
+  rangeStart           DateTime @map("range_start")
+  rangeEnd             DateTime @map("range_end")
+
+  totalMessages        Int      @default(0) @map("total_messages")
+  pricingQuestions     Int      @default(0) @map("pricing_questions")
+  locationQuestions    Int      @default(0) @map("location_questions")
+  bookingCount         Int      @default(0) @map("booking_count")
+
+  topServices          Json     @default("[]") @map("top_services")
+  notProvidedServices  Json     @default("[]") @map("not_provided_services")
+  couldntFindServices  Json     @default("[]") @map("couldnt_find_services")
+
+  generatedAt          DateTime @default(now()) @map("generated_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  chatbot              Chatbot  @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+
+  @@index([chatbotId, rangeDays])
+  @@index([generatedAt])
+  @@map("chatbot_insights")
 }
 
 // ============================================

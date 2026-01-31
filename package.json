@@ -8,6 +8,7 @@
     "start": "node --env-file=.env src/index.js",
     "start:prod": "node src/index.js",
     "dev": "node --env-file=.env --watch src/index.js",
+    "insights:batch": "node --env-file=.env src/scripts/insightsBatch.js",
     "db:push": "npx prisma db push",
     "db:generate": "npx prisma generate",
     "db:seed": "npx prisma db seed"

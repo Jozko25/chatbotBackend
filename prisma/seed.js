@@ -177,6 +177,147 @@ Only use data you’re allowed to use; state in your privacy policy that you use
 Begin with one chatbot and a clear scope (e.g. “FAQs and booking”). Once it’s stable and accurate, add more bots or pages. Use analytics to see which pages or intents drive the most chats.
 
 XeloChat gives you the tools (website training, booking, handoff); applying these practices will make your AI support more effective and reliable over time.`
+  },
+  {
+    slug: 'why-small-businesses-need-ai-chatbots-in-2025',
+    title: 'Why Small Businesses Need AI Chatbots in 2025',
+    excerpt: 'Customers expect instant answers. AI chatbots level the playing field—without hiring more staff or working round the clock.',
+    publishedAt: new Date('2025-01-28T10:00:00Z'),
+    content: `Small businesses often can’t afford a support team. Yet customers expect fast answers. AI chatbots close that gap.
+
+**The shift in expectations**
+
+- 79% of consumers expect a response within 24 hours; many want it within minutes.
+- After-hours queries pile up—and many visitors leave if they don’t get a quick answer.
+- Email and contact forms feel slow; live chat feels immediate.
+
+**How chatbots help small teams**
+
+- **24/7 presence** – Answer questions while you sleep or focus on core work.
+- **Consistent quality** – Every visitor gets accurate, up-to-date information.
+- **Scale without headcount** – One chatbot handles dozens of conversations.
+- **Lead capture** – Collect emails and booking requests directly in the chat.
+
+**Why XeloChat works for small business**
+
+XeloChat trains on your existing website content. No scripts to write, no decision trees to build. You add your URL, the AI learns your services and FAQs, and you deploy with one embed. Free tier: 50 messages/month to try it. Paid plans start low and grow with you.
+
+If you’re a small business owner tired of “I’ll get back to you,” a chatbot can give your visitors instant answers—and free your time for higher-value work.`
+  },
+  {
+    slug: 'xelochat-vs-intercom-vs-drift-which-chatbot-fits-your-budget',
+    title: 'XeloChat vs Intercom vs Drift: Which Chatbot Fits Your Budget?',
+    excerpt: 'Compare pricing, setup, and features: when to choose a simple AI chatbot vs. full sales and support platforms.',
+    publishedAt: new Date('2025-01-30T10:00:00Z'),
+    content: `Intercom and Drift are powerful—but expensive and complex. XeloChat is built for businesses that want AI support without enterprise pricing.
+
+**Intercom**
+
+- Full customer communication suite: live chat, help center, product tours, marketing automation.
+- Pricing: typically \$74+/month per seat. Good for teams with dedicated support and marketing roles.
+- Overkill if you mainly need a website chatbot for FAQs and lead capture.
+
+**Drift**
+
+- Conversational marketing and sales: lead scoring, meeting booking, revenue attribution.
+- Pricing: custom, often \$2,500+/month. Built for sales-led B2B.
+- Too heavy for small teams or content-driven support.
+
+**XeloChat**
+
+- Single focus: AI chatbot trained on your site. Answer questions, capture leads, book appointments.
+- Pricing: Free (50 msg/mo) → \$18 (Starter) → \$49 (Pro) → \$99 (Enterprise).
+- Fits small businesses, clinics, agencies, e‑commerce. Setup in minutes, not weeks.
+
+**When to choose what**
+
+- **Intercom** – You need help desk, ticketing, team inbox, and advanced automation.
+- **Drift** – You’re B2B, sales-driven, and have budget for a full revenue platform.
+- **XeloChat** – You want an AI chatbot that knows your site, embeds in one line, and costs a fraction.
+
+Start with XeloChat’s free plan. If you outgrow it, you’ll know exactly what you need from a bigger platform.`
+  },
+  {
+    slug: 'how-to-train-your-website-chatbot-for-better-answers',
+    title: 'How to Train Your Website Chatbot for Better Answers',
+    excerpt: 'Tips to improve chatbot accuracy: structure your content, add custom knowledge, and keep your site in sync.',
+    publishedAt: new Date('2025-02-01T10:00:00Z'),
+    content: `A website-trained chatbot is only as good as the content it learns from. Here’s how to get better answers from XeloChat (or any similar tool).
+
+**1. Put answers where the bot can find them**
+
+- FAQs on a dedicated page: “What are your hours?” “Do you ship internationally?”
+- Clear service and pricing pages—not buried in PDFs or images.
+- Contact and booking info in text, not just “Contact us” links.
+
+**2. Use clear, scannable structure**
+
+- Headings (H2, H3) help the AI understand topics.
+- Bullet points and short paragraphs beat long blocks.
+- Specific phrases (“We offer X, Y, Z”) work better than vague copy.
+
+**3. Add custom knowledge in the dashboard**
+
+- XeloChat lets you inject extra context: internal policies, seasonal info, product nuances.
+- Use it for details that aren’t on your site or change often.
+- Keep it concise and factual.
+
+**4. Re-crawl when you update**
+
+- When you change pricing, hours, or services, trigger a re-crawl so the bot stays in sync.
+- Stale answers are the top cause of user frustration.
+
+**5. Review and refine**
+
+- Check chat logs: Which questions get wrong or incomplete answers?
+- Add missing info to your site or custom knowledge.
+- Adjust tone and instructions in the dashboard if needed.
+
+Your chatbot reflects your content. Clean, structured, up-to-date content yields better answers and happier visitors.`
+  },
+  {
+    slug: '7-ways-to-use-xelochat-for-lead-capture',
+    title: '7 Ways to Use XeloChat for Lead Capture',
+    excerpt: 'Turn conversations into leads: qualify prospects, book demos, collect emails, and route high-intent visitors—all from the chat.',
+    publishedAt: new Date('2025-02-03T10:00:00Z'),
+    content: `Your chatbot doesn’t just answer questions—it can capture leads. Here are seven practical ways to use XeloChat for lead generation.
+
+**1. Email capture before answers**
+
+- “I can share our pricing. What’s your email?”—collect before revealing details.
+- Works well for gated content or demo requests.
+
+**2. Qualify before booking**
+
+- Ask: “What’s your use case?” or “Which plan are you considering?”
+- Route high-intent visitors to a booking or sales form; others get self-serve help.
+
+**3. Booking requests from chat**
+
+- “I’d like to book a consultation”—capture name, email, preferred time.
+- XeloChat can create Google Calendar events; you get a structured lead and confirmed slot.
+
+**4. Product interest**
+
+- “Which product are you interested in?” → save the answer with contact details.
+- Pass to CRM or spreadsheets for follow-up.
+
+**5. Newsletter signup**
+
+- “Want our weekly tips? Drop your email.”
+- Simple, low-friction way to grow your list.
+
+**6. Support-to-sales handoff**
+
+- When someone asks about pricing or enterprise, offer a call or demo.
+- Capture details and notify your team for a warm follow-up.
+
+**7. Feedback and NPS**
+
+- “How was your experience? 1–10.” Plus optional email for follow-up.
+- Turns feedback into a lead when they’re engaged.
+
+XeloChat’s booking and lead capture run inside the conversation—no separate forms. Configure what you collect in the dashboard and start turning chat into leads.`
   }
 ];
 
