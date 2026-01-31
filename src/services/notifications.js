@@ -67,18 +67,12 @@ function generateBookingEmailHtml(booking, chatbot) {
         <table style="width: 100%; border-collapse: collapse; background: #fafafa; border-radius: 8px; overflow: hidden;">
           ${dataHtml}
         </table>
-        
-        <div style="margin-top: 24px; padding: 16px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-          <p style="margin: 0; color: #0369a1; font-size: 14px;">
-            <strong>Submitted:</strong> ${new Date(booking.createdAt).toLocaleString('sk-SK', { dateStyle: 'full', timeStyle: 'short' })}
-          </p>
-        </div>
       </div>
       
       <!-- Footer -->
       <div style="padding: 16px 24px; background: #f9fafb; border-top: 1px solid #eee; text-align: center;">
         <p style="margin: 0; color: #6b7280; font-size: 12px;">
-          Powered by XeloChat · Delivered via Resend
+          Powered by XeloChat
         </p>
       </div>
     </div>
@@ -99,10 +93,8 @@ via ${chatbot.name} chatbot
 
 ${data}
 
-Submitted: ${new Date(booking.createdAt).toLocaleString('sk-SK', { dateStyle: 'full', timeStyle: 'short' })}
-
 ---
-Powered by XeloChat · Delivered via Resend
+Powered by XeloChat
   `.trim();
 }
 
